@@ -36,7 +36,6 @@ import {
   shortlistCatalogForLlm,
   resolveTargetItemCount,
 } from './catalog-filter.util';
-import { filterOutForbidden } from './catalog-forbidden-match.util';
 import { filterCatalogByBriefRelevance } from './catalog-brief-relevance.util';
 import {
   stratifiedCatalogForLlm,
@@ -82,13 +81,6 @@ import {
 } from './local-scene-prompt';
 import { finalizeSceneLlmOutput, finalizeCatalogSceneLlmOutput } from './finalize-scene-output';
 import { LlmBriefParseJson } from './parse-llm-json';
-import { openRouterFetch } from './openrouter-proxy.util';
-import { safeJsonParse } from './safe-json-parse.util';
-import {
-  SINGLE_PRODUCT_PROBE_SYSTEM_PROMPT,
-  parseSingleProductLlmResponse,
-  type BriefIntentProbe,
-} from './catalog-single-product-llm.util';
 import {
   mergeParsedBrief,
   parseBriefLocally,
@@ -124,8 +116,6 @@ export class LlmBriefService implements OnModuleInit {
   private readonly logger = new Logger(LlmBriefService.name);
   private catalogCache: { at: number; data: CatalogProduct[] } | null = null;
   private readonly catalogCacheTtlMs = 5 * 60 * 1000;
-  /** Кэш LLM-классификации намерения брифа по нормализованному тексту (регенерация/повтор не бьют по сети). */
-  private readonly singleProductProbeCache = new Map<string, BriefIntentProbe>();
 
   constructor(
 
@@ -181,9 +171,6 @@ export class LlmBriefService implements OnModuleInit {
       where.OR = [{ price: null }, { price: { lte: priceCap } }];
     }
     if (tirage > 0) {
-      // Колонка stockAvailable — NOT NULL (@default(0)): неизвестный остаток хранится как 0, а не
-      // NULL. `gte` корректно исключает 0-сток (и DB, и JS-гейт делают это согласованно) — «null=
-      // доступен» из JS-контракта здесь неактуально, т.к. NULL-строк в БД нет.
       where.stockAvailable = { gte: tirage };
     }
     if (input.blacklistedProductIds?.length) {
@@ -214,8 +201,6 @@ export class LlmBriefService implements OnModuleInit {
       heightCm: true,
       depthCm: true,
       weightG: true,
-      material: true,
-      characteristics: true,
     } as const;
 
     // Стратифицированная загрузка по категориям.
@@ -231,11 +216,8 @@ export class LlmBriefService implements OnModuleInit {
 
     const seed = input.retrievalSeed ?? null;
     const shuffleRng = seed != null ? makeRng(seed ^ seedFromString(categoryGroup)) : null;
-    // Fisher–Yates (несмещённый) в ОБОИХ ветках: `sort(() => Math.random() - 0.5)` даёт
-    // НЕравномерную перестановку (порядок зависит от алгоритма сортировки движка) — часть
-    // каталога систематически чаще оказывалась в голове пула. seededShuffle принимает любой rng.
     const shuffle = (rows: CatalogProduct[]): CatalogProduct[] =>
-      seededShuffle(rows, shuffleRng ?? Math.random);
+      shuffleRng ? seededShuffle(rows, shuffleRng) : rows.slice().sort(() => Math.random() - 0.5);
 
     if (rawCached) {
       this.logger.log(`Raw catalog cache hit (${rawCached.candidates.length} candidates, group=${categoryGroup}, key=${rawKey.slice(4, 12)})`);
@@ -252,7 +234,7 @@ export class LlmBriefService implements OnModuleInit {
       // Шаг 1: считаем кол-во товаров в каждом бакете (параллельно, по индексу category)
       const counts = await Promise.all(
         categoryBuckets.map((b) =>
-          this.prisma.product.count({ where: bucketWhere(where, b.categories, b.notIn) }),
+          this.prisma.product.count({ where: bucketWhere(where, b.categories) }),
         ),
       );
 
@@ -267,7 +249,7 @@ export class LlmBriefService implements OnModuleInit {
                 ? Math.floor(Math.random() * (count - b.quota))
                 : 0;
           return this.prisma.product.findMany({
-            where: bucketWhere(where, b.categories, b.notIn),
+            where: bucketWhere(where, b.categories),
             select: productSelect,
             orderBy: { id: 'asc' },
             skip,
@@ -281,7 +263,7 @@ export class LlmBriefService implements OnModuleInit {
       setCachedRawCandidates(rawKey, candidates, totalInDb);
       this.logger.log(
         `Raw catalog loaded stratified: ${candidates.length}/${totalInDb} products, group=${categoryGroup}, ` +
-          `buckets=[${categoryBuckets.map((b: CategoryBucket, i: number) => `${b.notIn ? 'catch-all' : b.categories[0]}:${counts[i]}`).join(', ')}]`,
+          `buckets=[${categoryBuckets.map((b: CategoryBucket, i: number) => `${b.categories[0]}:${counts[i]}`).join(', ')}]`,
       );
       // Shuffle для первого запроса тоже (детерминированный при seed)
       candidates = shuffle(candidates);
@@ -337,10 +319,7 @@ export class LlmBriefService implements OnModuleInit {
       forLlm,
       // Широкий пул всех категорий (candidates до relevance/eco-сужения) — для
       // диверсификации нишевых брифов. Капим для перфа; категории стратифицированы.
-      // ЗАПРЕТЫ применяем и здесь: broad уходит в fullCatalog нейро-добора (archetype-core,
-      // Pass-2 диверсификация) в обход filterCatalogForRequest — иначе запрещённые товары
-      // возвращались через диверсификацию (прогон 22:04). Ширину по категориям сохраняем.
-      broad: filterOutForbidden(candidates, input.forbiddenItems ?? []).slice(0, 2500),
+      broad: candidates.slice(0, 2500),
       overview,
       typeIndex,
     };
@@ -398,8 +377,6 @@ export class LlmBriefService implements OnModuleInit {
     heightCm?: number | null;
     depthCm?: number | null;
     weightG?: number | null;
-    material?: string | null;
-    characteristics?: string[];
   }): CatalogProduct {
     return {
       id: p.id,
@@ -421,8 +398,6 @@ export class LlmBriefService implements OnModuleInit {
       heightCm: p.heightCm ?? null,
       depthCm: p.depthCm ?? null,
       weightG: p.weightG ?? null,
-      material: p.material ?? null,
-      characteristics: Array.isArray(p.characteristics) ? p.characteristics : [],
     };
   }
 
@@ -460,8 +435,6 @@ export class LlmBriefService implements OnModuleInit {
         heightCm: true,
         depthCm: true,
         weightG: true,
-        material: true,
-        characteristics: true,
       },
     });
     const data = rows.map((p) => this.mapProductRow(p));
@@ -648,8 +621,6 @@ export class LlmBriefService implements OnModuleInit {
           heightCm: true,
           depthCm: true,
           weightG: true,
-          material: true,
-          characteristics: true,
         },
         take: limit,
       });
@@ -727,9 +698,6 @@ export class LlmBriefService implements OnModuleInit {
         forbiddenItems: Array.isArray(p.forbidden_items)
           ? (p.forbidden_items as BriefForbiddenOption[])
           : undefined,
-        forbiddenNamed: Array.isArray(p.forbidden_named)
-          ? p.forbidden_named.filter((x): x is string => typeof x === 'string')
-          : undefined,
         alternativeTypeGroups: Array.isArray(p.alternative_type_groups)
           ? p.alternative_type_groups.filter((g) => Array.isArray(g) && g.length >= 2)
           : undefined,
@@ -737,85 +705,6 @@ export class LlmBriefService implements OnModuleInit {
       };
     } catch {
       return {};
-    }
-  }
-
-  /**
-   * LLM-КЛАССИФИКАЦИЯ НАМЕРЕНИЯ БРИФА: точная позиция (материал/цвет/характеристика) vs идея
-   * (occasion/purpose) — см. catalog-single-product-llm.util.ts. Best-effort — любая ошибка/таймаут/
-   * недоступность LLM → нейтральный фолбэк {mode:"idea", всё null} (пайплайн идёт как раньше, в
-   * обычный идеатор без occasion/purpose контекста). Кэшируется по нормализованному тексту брифа.
-   */
-  async classifyBriefIntent(userPrompt: string): Promise<BriefIntentProbe> {
-    const key = (userPrompt || '').toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ').trim();
-    const cached = this.singleProductProbeCache.get(key);
-    if (cached) return cached;
-
-    const fallback: BriefIntentProbe = {
-      mode: 'idea',
-      term: null,
-      material: null,
-      color: null,
-      characteristic: null,
-      occasion: null,
-      purpose: null,
-    };
-    const apiKey = this.config.get<string>('OPENROUTER_API_KEY');
-    if (!apiKey?.trim()) return fallback;
-
-    const model = this.config.get<string>('BRIEF_PARSE_MODEL', 'google/gemini-2.5-flash');
-    const apiUrl = this.config.get<string>(
-      'OPENROUTER_API_URL',
-      'https://openrouter.ai/api/v1/chat/completions',
-    );
-    const timeoutMs = Number(this.config.get('SINGLE_PRODUCT_PROBE_TIMEOUT_MS')) || 20_000;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      const started = Date.now();
-      const response = await openRouterFetch(apiUrl, {
-        method: 'POST',
-        signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-          'HTTP-Referer': this.config.get<string>('OPENROUTER_SITE_URL', 'http://localhost:3000'),
-          'X-Title': this.config.get<string>('OPENROUTER_APP_NAME', 'Suvenir AI'),
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: 'system', content: SINGLE_PRODUCT_PROBE_SYSTEM_PROMPT },
-            { role: 'user', content: userPrompt },
-          ],
-          response_format: { type: 'json_object' },
-          temperature: 0,
-          max_tokens: 500,
-        }),
-      });
-      const text = await response.text();
-      if (!response.ok) {
-        this.logger.warn(`brief-intent probe: HTTP ${response.status} ${text.slice(0, 120)}`);
-        return fallback;
-      }
-      const data = safeJsonParse(text, 'brief-intent probe') as {
-        choices?: Array<{ message?: { content?: string } }>;
-      };
-      const content = data.choices?.[0]?.message?.content ?? '';
-      const probe = parseSingleProductLlmResponse(content);
-      this.singleProductProbeCache.set(key, probe);
-      this.logger.log(
-        `LLM brief-intent probe (${model}, ${Date.now() - started}ms, contentLen=${content.length}): mode=${probe.mode} ` +
-          `term=${probe.term ?? '—'} occasion=${probe.occasion ?? '—'} purpose=${probe.purpose ?? '—'}`,
-      );
-      return probe;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`brief-intent probe failed: ${msg.slice(0, 120)}`);
-      return fallback;
-    } finally {
-      clearTimeout(timer);
     }
   }
 

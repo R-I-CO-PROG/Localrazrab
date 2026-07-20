@@ -1,0 +1,30 @@
+{
+  "name": "ult-concept-ai",
+  "private": true,
+  "scripts": {
+    "dev:local": "docker compose up -d && pnpm prisma:migrate && pnpm prisma:seed && pnpm dev",
+    "dev": "concurrently -n api,web -c blue,green \"pnpm --filter @suvenir/api dev\" \"pnpm --filter @suvenir/web dev\"",
+    "dev:all": "concurrently -n api,web -c blue,green \"pnpm --filter @suvenir/api dev\" \"pnpm --filter @suvenir/web dev\"",
+    "dev:all:tailscale": "node scripts/tunnel-tailscale.mjs && concurrently -n api,web -c blue,green \"pnpm --filter @suvenir/api dev\" \"pnpm --filter @suvenir/web dev\"",
+    "dev:api": "pnpm --filter @suvenir/api dev",
+    "dev:web": "pnpm --filter @suvenir/web dev",
+    "dev:web:clean": "pnpm --filter @suvenir/web dev:clean",
+    "build": "pnpm --filter @suvenir/api build && pnpm --filter @suvenir/web build",
+    "prisma:migrate": "pnpm --filter @suvenir/api prisma:migrate",
+    "prisma:push": "pnpm --filter @suvenir/api prisma:push",
+    "prisma:seed": "pnpm --filter @suvenir/api prisma:seed",
+    "prisma:generate": "pnpm --filter @suvenir/api prisma:generate",
+    "logic:extract": "node scripts/extract-logic-prompts.mjs",
+    "tunnel:localtunnel": "node scripts/tunnel-localtunnel.mjs",
+    "tunnel:tailscale": "node scripts/tunnel-tailscale.mjs",
+    "postinstall": "pnpm --filter @suvenir/api exec prisma generate && pnpm --filter @suvenir/web exec prisma generate"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "localtunnel": "^2.0.2",
+    "prisma": "6.19.3"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3"
+  }
+}

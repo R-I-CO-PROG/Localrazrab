@@ -1,0 +1,24 @@
+import type { CatalogProduct } from './catalog.util';
+export declare function productColorNames(product: CatalogProduct): string[];
+export declare function inferProductRgb(product: CatalogProduct): [number, number, number] | null;
+export declare function productFieldColorsMatchPalette(product: CatalogProduct, requestColors: string[]): boolean;
+export declare function isColorCriticalProductType(type: string): boolean;
+export declare function isColorCriticalProduct(product: CatalogProduct): boolean;
+export declare function scoreBrandColorMatch(product: CatalogProduct, brandColors: string[]): number;
+export type ColorToneClass = {
+    warmth: 'warm' | 'cool' | 'neutral';
+    intensity: 'bright' | 'neon' | 'pastel' | 'muted' | 'dark';
+};
+export declare function classifyColorTone(rgb: [number, number, number]): ColorToneClass;
+export declare function isNeonToneRgb(rgb: [number, number, number]): boolean;
+export declare function isBrightToneRgb(rgb: [number, number, number]): boolean;
+export declare function isPastelToneRgb(rgb: [number, number, number]): boolean;
+export declare function productHasForbiddenColor(product: CatalogProduct, forbiddenHints: string[]): boolean;
+export declare function scoreBriefPaletteMatch(product: CatalogProduct, allowedColors: string[], forbiddenHints: string[]): number;
+export declare function isWarmToneRgb(rgb: [number, number, number]): boolean;
+export declare function isCoolToneRgb(rgb: [number, number, number]): boolean;
+export declare function scoreWarmthTone(product: CatalogProduct, brief: string): number;
+export declare function buildBrandColorScoreFn(brandColors: string[]): (product: CatalogProduct) => number;
+export declare function matchesBrandColors(product: CatalogProduct, brandColors: string[]): boolean;
+export declare function productConflictsBriefPalette(product: CatalogProduct, brandColors: string[], brief: string, forbiddenHints?: string[]): boolean;
+export declare function pickCatalogColorNameForBrand(product: CatalogProduct, brandColors: string[]): string | undefined;

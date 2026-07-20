@@ -1,0 +1,198 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 6% 96%;
+    --foreground: 240 10% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 10%;
+    --primary: 263 70% 58%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 5% 92%;
+    --secondary-foreground: 240 6% 20%;
+    --muted: 240 5% 90%;
+    --muted-foreground: 240 4% 42%;
+    --accent: 263 70% 58%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5% 86%;
+    --input: 240 5% 88%;
+    --ring: 263 70% 58%;
+    --radius: 0.875rem;
+  }
+
+  .dark {
+    --background: 240 10% 4%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 6%;
+    --card-foreground: 0 0% 98%;
+    --primary: 263 70% 58%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 4% 14%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 4% 16%;
+    --muted-foreground: 240 5% 65%;
+    --accent: 263 70% 58%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 62% 45%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 4% 16%;
+    --input: 240 4% 16%;
+    --ring: 263 70% 58%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  ::selection {
+    background-color: hsl(var(--primary) / 0.25);
+    color: hsl(var(--foreground));
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply border border-border/50 bg-card/60 backdrop-blur-xl;
+  }
+
+  .glass-card {
+    @apply glass rounded-2xl shadow-soft;
+  }
+
+  .shadow-glow {
+    box-shadow: 0 0 40px -8px hsl(var(--primary) / 0.4);
+  }
+
+  .shadow-glow-sm {
+    box-shadow: 0 0 20px -4px hsl(var(--primary) / 0.3);
+  }
+}
+
+/* ===========================================================================
+   Admin "cockpit" — scoped design layer
+   ---------------------------------------------------------------------------
+   Everything under .admin-shell adopts a self-contained dark instrument theme,
+   independent of the app's light/dark setting. CSS variables are redefined so
+   existing primitives (Card, Button, Input, Badge…) retheme automatically; new
+   tokens drive the serif hero figures and chart palette. Nothing here leaks to
+   the rest of the site.
+   ======================================================================== */
+.admin-shell {
+  /* Surfaces — near-black blue-grey, stepped a few % at a time */
+  --background: 213 24% 5%;
+  --foreground: 210 16% 93%;
+  --card: 213 18% 8.5%;
+  --card-foreground: 210 16% 93%;
+  --popover: 213 17% 11%;
+  --popover-foreground: 210 16% 93%;
+
+  /* Single signal accent — instrument green */
+  --primary: 150 62% 52%;
+  --primary-foreground: 153 84% 6%;
+  --accent: 150 62% 52%;
+  --accent-foreground: 153 84% 6%;
+
+  --secondary: 213 15% 15%;
+  --secondary-foreground: 210 14% 88%;
+  --muted: 213 16% 13%;
+  --muted-foreground: 213 11% 57%;
+
+  --destructive: 356 70% 60%;
+  --destructive-foreground: 0 0% 100%;
+
+  --border: 213 15% 16%;
+  --input: 213 19% 11%;
+  --ring: 150 62% 52%;
+  --radius: 0.875rem;
+
+  /* Admin-only tokens */
+  --font-display: var(--font-spectral), Georgia, "Times New Roman", serif;
+  --admin-accent: 150 62% 52%;
+  --admin-accent-soft: 150 62% 52% / 0.12;
+  --admin-grid: 213 20% 18%;
+  --admin-warning: 38 92% 58%;
+  --admin-info: 199 89% 60%;
+
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  /* Faint engineering grid so empty space reads as an instrument surface */
+  background-image:
+    linear-gradient(hsl(var(--admin-grid) / 0.35) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--admin-grid) / 0.35) 1px, transparent 1px);
+  background-size: 56px 56px, 56px 56px;
+  background-position: -1px -1px, -1px -1px;
+}
+
+@layer utilities {
+  .font-display {
+    font-family: var(--font-display);
+    font-feature-settings: "tnum" 1, "lnum" 1, "ss01" 1;
+  }
+
+  /* Tabular figures for any live/measured number */
+  .num {
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+
+  /* Monospace for IDs, SKUs, technical strings */
+  .mono {
+    font-family: var(--font-geist-mono), ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Small keyboard / code chip */
+  .admin-kbd {
+    @apply inline-flex items-center rounded-md border border-border bg-secondary px-1.5 py-0.5 text-[11px];
+    font-family: var(--font-geist-mono), ui-monospace, monospace;
+  }
+
+  /* Live status dot */
+  .admin-pulse {
+    box-shadow: 0 0 0 0 hsl(var(--primary) / 0.6);
+    animation: admin-pulse 2.2s cubic-bezier(0.66, 0, 0.34, 1) infinite;
+  }
+}
+
+@keyframes admin-pulse {
+  0% {
+    box-shadow: 0 0 0 0 hsl(var(--primary) / 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 7px hsl(var(--primary) / 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 hsl(var(--primary) / 0);
+  }
+}
+
+/* Quiet, cockpit-native scrollbars inside the shell */
+.admin-shell ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.admin-shell ::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border: 2px solid hsl(var(--card));
+  border-radius: 999px;
+}
+.admin-shell ::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+.admin-shell ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-pulse {
+    animation: none;
+  }
+}

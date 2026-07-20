@@ -66,16 +66,6 @@ function scoreCatalogIdeaForBrief(
 
   score += scoreBrandColorSlots(idea, brandColors);
 
-  // Материал ВСЕГО набора («полностью кожаный») — жёсткое требование (см. requiredMaterial в
-  // AgentBriefContext). Реальный фильтр товаров — в neuralSelector; здесь — бонус/штраф, чтобы
-  // идеи, УЖЕ упоминающие материал в тексте (Ideator должен был отразить его в notes по промпту),
-  // ранжировались выше идей, которые его проигнорировали.
-  const requiredMaterial = brief.requiredMaterial?.trim().toLowerCase();
-  if (requiredMaterial) {
-    if (blob.includes(requiredMaterial)) score += 30;
-    else score -= 20;
-  }
-
   if (idea.whyItFits?.trim()) score += 8;
   if (idea.themeAxis?.trim()) score += 5;
 

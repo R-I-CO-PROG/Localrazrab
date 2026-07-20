@@ -1,9 +1,5 @@
 import { Logger } from '@nestjs/common';
-import {
-  normalizeBriefAllowedBuckets,
-  normalizeBriefForbiddenBuckets,
-  bucketsForCategoryTerm,
-} from '../catalog/brief-category-buckets.util';
+import { normalizeBriefAllowedBuckets } from '../catalog/brief-category-buckets.util';
 import {
   BRIEF_ALLOWED_CATEGORIES,
   BRIEF_CATEGORIES,
@@ -16,7 +12,6 @@ import { reconcileBriefConstraints, briefRequestsClothing } from './brief-constr
 import { parseDesiredItemCount, parseItemCountBounds } from '../providers/llm/parse-desired-count';
 import {
   detectAlternativeTypeGroupsFromBrief,
-  PAST_GIFTS_RE,
 } from '../providers/llm/concept-diversity.util';
 import { LIMITS } from '../common/sanitize-request-integers';
 import {
@@ -85,28 +80,6 @@ function parseQuantity(text: string): number | null {
     /(\d[\d\s]*)\s*(?:шт\.?|штук|единиц|копий|exemplars)/i,
     /заказ\s+(?:на\s+)?(\d[\d\s]*)/i,
     /(\d[\d\s]*)\s*(?:подарк|набор)/i,
-  ];
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match) {
-      const n = parseInt(match[1].replace(/\s/g, ''), 10);
-      if (n >= 1 && n <= 1_000_000) return n;
-    }
-  }
-  return null;
-}
-
-/**
- * ЯВНЫЙ тираж — только СИЛЬНЫЕ сигналы («тираж N», «N штук/экземпляров/копий/наборов»). НЕ ловит
- * слабый инференс по числу аудитории («100 сотрудников»), из-за которого «подобрать параметры»
- * затирал введённый пользователем тираж (ввёл 30 → стало 100). Приоритетнее UI-значения только он.
- */
-export function parseExplicitTirage(text: string): number | null {
-  const patterns = [
-    /тираж[:\s]*(\d[\d\s]*)/i,
-    /(\d[\d\s]*)\s*(?:шт\.?|штук[аи]?|единиц|экземпляр[а-яё]*|копий)/i,
-    /(\d[\d\s]*)\s*(?:подарочн[а-яё]*\s+)?набор(?:ов|а)?(?![а-яё])/i,
-    /(?:по|в\s+количестве)\s+(\d[\d\s]*)\s*(?:шт|штук|экземпляр)/i,
   ];
   for (const pattern of patterns) {
     const match = text.match(pattern);
@@ -213,7 +186,7 @@ function parseCategory(text: string): BriefCategory | null {
 }
 
 
-export function parseAllowedCategories(text: string): BriefAllowedCategory[] | null {
+function parseAllowedCategories(text: string): BriefAllowedCategory[] | null {
   const lower = text.toLowerCase();
   const onlyMatch = lower.match(/(?:только|исключительно|нужн\w*\s+только)\s+([^.!\n]{3,80})/i);
   const segment = onlyMatch?.[1] ?? lower;
@@ -286,7 +259,7 @@ export function parseAllowedCategories(text: string): BriefAllowedCategory[] | n
 // ВАЖНО: \w НЕ матчит кириллицу в JS-regex — используем [а-яё]* для окончаний глаголов,
 // иначе «не предлагАТЬ ...» захватывается неверно и в токен попадает «ать ...».
 const NEGATION_RE =
-  /(?:не\s+предлаг[а-яё]*|не\s+подбир[а-яё]*|не\s+добавля[а-яё]*|не\s+нужн[а-яё]*|не\s+хоч[а-яё]*|не\s+использ[а-яё]*|не\s+вставля[а-яё]*|не\s+надо\s+|без\s+|исключ[а-яё]*|убер[а-яё]*|убра[а-яё]*|удал[а-яё]*|нельзя|запрещ[а-яё]*|no\s+)([^.!?\n;]{2,80})/gi;
+  /(?:не\s+предлаг[а-яё]*|не\s+нужн[а-яё]*|не\s+использ[а-яё]*|не\s+вставля[а-яё]*|без\s+|исключ[а-яё]*|нельзя|запрещ[а-яё]*|no\s+)([^.!?\n;]{2,80})/gi;
 
 export function extractForbiddenNamed(text: string): { tokens: string[]; remainder: string } {
   const tokens: string[] = [];
@@ -294,13 +267,7 @@ export function extractForbiddenNamed(text: string): { tokens: string[]; remaind
   for (const m of text.matchAll(NEGATION_RE)) {
     const seg = m[1] ?? '';
     for (const part of seg.split(/[,;]|\s+и\s+|\/|\bа\s+также\b/i)) {
-      const w = part
-        .trim()
-        .replace(/[.)("'»«]+$/, '')
-        // Срезаем ведущие слова-филлеры («не подбирай МНЕ зонты» → «зонты»), чтобы чип/матч
-        // запрета был по самой категории, а не по «мне зонты».
-        .replace(/^(?:мне|мной|меня|нам|нас|тебе|вам|это|пожалуйста|там|тут)\s+/i, '')
-        .trim();
+      const w = part.trim().replace(/[.)("'»«]+$/, '').trim();
       if (
         w.length >= 3 &&
         w.length <= 40 &&
@@ -313,25 +280,6 @@ export function extractForbiddenNamed(text: string): { tokens: string[]; remaind
     remainder = remainder.split(m[0]).join(' ');
   }
   return { tokens: [...new Set(tokens)], remainder };
-}
-
-/**
- * Из формулировки «в прошлом дарили X» извлекает товары X как ЗАПРЕЩЁННЫЕ (клиент их уже дарил)
- * и возвращает текст БЕЗ этой клаузы — чтобы её товары не попали в «разрешённые»/«запрошенные».
- * Переиспользует существующие извлекатели (категории + именованные типы), но инвертирует их в запрет.
- */
-export function extractPastGiftsForbidden(text: string): { forbiddenTokens: string[]; remainder: string } {
-  const tokens = new Set<string>();
-  let remainder = text;
-  for (const m of text.matchAll(PAST_GIFTS_RE)) {
-    const clause = m[1] ?? '';
-    // Категории прошлых подарков → запрет («текстиля» → Текстиль, «гаджеты» → Электроника).
-    for (const cat of parseAllowedCategories(clause) ?? []) tokens.add(cat);
-    // Именованные типы прошлых подарков → запрет их подписей («пледы», «полотенца», «косметички»).
-    for (const label of parseNamedPositionsFromBrief(clause)) tokens.add(label);
-    remainder = remainder.split(m[0]).join(' ');
-  }
-  return { forbiddenTokens: [...tokens], remainder };
 }
 
 function parseForbidden(text: string): BriefForbiddenOption[] {
@@ -404,14 +352,15 @@ function finalizeParsedBrief(text: string, result: ParsedBriefResult): ParsedBri
     ) as BriefAllowedCategory[];
   }
 
-  // Именованные позиции — по тексту БЕЗ негатив-сегментов И БЕЗ клаузы прошлых подарков, иначе
-  // «не предлагать колонки»/«в прошлом дарили пледы» снова добавят их в namedItems (инверсия
-  // запрета в рекомендацию). Здесь эти regex-извлечения используются ТОЛЬКО чтобы вырезать
-  // негативные клаузы из текста перед поиском positive namedItems — сам список запретов
-  // (forbiddenNamed) в этой точке уже решён LLM (mergeParsedBrief) и regex НЕ должен его
-  // переопределять/дополнять задним числом (иначе LLM-решение по forbiddenNamed теряет смысл).
-  const past = extractPastGiftsForbidden(text);
-  const negation = extractForbiddenNamed(past.remainder);
+  // Именованные позиции — по тексту БЕЗ негатив-сегментов, иначе «не предлагать колонки»
+  // снова добавит «колонка» в namedItems (→ инверсия запрета в рекомендацию на фронте).
+  const negation = extractForbiddenNamed(text);
+  if (negation.tokens.length) {
+    result.forbiddenNamed = [...new Set([...(result.forbiddenNamed ?? []), ...negation.tokens])];
+    if (!result.updatedFields.includes('forbiddenItems')) {
+      result.updatedFields.push('forbiddenItems');
+    }
+  }
   const fromBrief = parseNamedPositionsFromBrief(negation.remainder);
   if (fromBrief.length) {
     result.namedItems = [...new Set([...(result.namedItems ?? []), ...fromBrief])];
@@ -445,23 +394,6 @@ function finalizeParsedBrief(text: string, result: ParsedBriefResult): ParsedBri
     }
   }
 
-  // Страховка «нельзя» ⟂ «можно»: если категория попала в запрет (бакет или свободный текст,
-  // напр. «зонты»), убираем соответствующий бакет из allowed — LLM/скрипт могли ошибочно
-  // оставить негативную категорию в «можно предлагать». Матч по корню имени бакета (bucketsForCategoryTerm).
-  const forbiddenTerms = [
-    ...((result.forbiddenItems as string[] | undefined) ?? []),
-    ...(result.forbiddenNamed ?? []),
-  ];
-  if (forbiddenTerms.length && result.allowedItems?.length) {
-    const forbiddenBuckets = new Set(forbiddenTerms.flatMap((t) => bucketsForCategoryTerm(t)));
-    if (forbiddenBuckets.size) {
-      const kept = result.allowedItems.filter((b) => !forbiddenBuckets.has(b));
-      if (kept.length !== result.allowedItems.length) {
-        result.allowedItems = kept as BriefAllowedCategory[];
-      }
-    }
-  }
-
   return result;
 }
 
@@ -470,14 +402,12 @@ export function parseBriefLocally(userPrompt: string): ParsedBriefResult {
   const updatedFields: string[] = [];
   const result: ParsedBriefResult = { updatedFields };
 
-  // «В прошлом дарили X» → X это запрет (уже дарили), а НЕ запрос. Вырезаем клаузу ПЕРВОЙ, чтобы
-  // её товары не ушли в «разрешённые»/«именованные». Затем обычные запреты («не предлагать …»).
-  const past = extractPastGiftsForbidden(text);
-  const negation = extractForbiddenNamed(past.remainder);
+  // Запрещённые позиции («не предлагать колонки/пауэрбанки») извлекаем ПЕРВЫМИ и вырезаем
+  // из текста, чтобы разбор «разрешённых»/«именованных» шёл по остатку и не инвертировал запрет.
+  const negation = extractForbiddenNamed(text);
   const allowedText = negation.remainder;
-  const forbiddenTokens = [...new Set([...past.forbiddenTokens, ...negation.tokens])];
-  if (forbiddenTokens.length > 0) {
-    result.forbiddenNamed = forbiddenTokens;
+  if (negation.tokens.length > 0) {
+    result.forbiddenNamed = negation.tokens;
     if (!updatedFields.includes('forbiddenItems')) updatedFields.push('forbiddenItems');
   }
 
@@ -563,20 +493,14 @@ export function mergeParsedBrief(
     updatedFields.add('category');
   }
 
-  // Тираж — LLM авторитетна. Промпт (buildLlmSystemPromptForBriefParse) явно требует называть
-  // тираж только при прямом упоминании в брифе и запрещает угадывать дефолт/пример — поэтому
-  // регексу больше не нужно перебивать LLM «на всякий случай». Регекс остаётся фолбэком, если
-  // LLM не вернула quantity вовсе (недоступна/JSON без этого поля).
-  if (llm.quantity != null) {
-    merged.quantity = llm.quantity;
-    updatedFields.add('quantity');
-  } else if (!localHas('quantity')) {
+  // Тираж — только если локальный парсер нашёл число в тексте (LLM копирует пример «300»)
+  if (!localHas('quantity')) {
     updatedFields.delete('quantity');
     delete merged.quantity;
   }
 
-  // Бюджет — LLM авторитетна, регекс — фолбэк, если LLM не распознала бюджет вовсе.
-  if (llm.budgetMin != null || llm.budgetMax != null) {
+  // Бюджет — локальный парсер точнее для «бюджет 5000 рублей»
+  if ((llm.budgetMin || llm.budgetMax) && !localHas('budgetMin') && !localHas('budgetMax')) {
     const min = llm.budgetMin ?? llm.budgetMax!;
     const max = llm.budgetMax ?? llm.budgetMin!;
     const clamped = clampBudget(min, max);
@@ -588,33 +512,27 @@ export function mergeParsedBrief(
     updatedFields.add('budgetMax');
   }
 
-  // Цвета — LLM авторитетна (лучше понимает названия цветов и HEX по смыслу брифа).
   if (llm.colors?.length) {
     const llmColors = llm.colors
       .map((c) => normalizeHex(c) ?? c.toUpperCase())
       .filter(Boolean);
-    merged.colors = llmColors.slice(0, 8);
-    updatedFields.add('colors');
+    if (!localHas('colors')) {
+      merged.colors = llmColors.slice(0, 8);
+      updatedFields.add('colors');
+    }
   }
 
-  // «Можно предлагать» — категории определяет LLM ПО СМЫСЛУ (нормализуем в валидные бакеты).
-  // Локальный скрипт parseAllowedCategories остаётся ФОЛБЭКОМ: если LLM ничего не вернул,
-  // merged сохраняет распознанные скриптом категории (merged = {...local}). Именованные
-  // позиции из LLM всё равно объединяем со скриптовыми — это не «категории-бакеты».
   if (llm.allowedItems?.length) {
     const llmSplit = splitAllowedItemsMixed(llm.allowedItems);
-    const llmCategories = normalizeBriefAllowedBuckets([
-      ...llmSplit.categories,
-      ...normalizeBriefAllowedBuckets(llm.allowedItems),
-    ]);
-    if (llmCategories.length) {
-      merged.allowedItems = llmCategories;
-      updatedFields.add('allowedItems');
-    }
+    const combinedCategories = [
+      ...new Set([...(local.allowedItems ?? []), ...llmSplit.categories, ...normalizeBriefAllowedBuckets(llm.allowedItems)]),
+    ];
+    merged.allowedItems = normalizeBriefAllowedBuckets(combinedCategories);
     if (llmSplit.namedItems.length) {
       merged.namedItems = [...new Set([...(local.namedItems ?? []), ...llmSplit.namedItems])];
       updatedFields.add('namedItems');
     }
+    if (merged.allowedItems.length) updatedFields.add('allowedItems');
   }
 
   if (llm.namedItems?.length) {
@@ -622,34 +540,13 @@ export function mergeParsedBrief(
     updatedFields.add('namedItems');
   }
 
-  // «Нельзя предлагать» — категории определяет LLM ПО СМЫСЛУ (нормализуем в валидные бакеты).
-  // Явные запреты из текста (parseForbidden) остаются страховкой: объединяем их с LLM, чтобы
-  // ничто запрещённое не утекло. Если ни LLM, ни скрипт запретов не дали — очищаем поле.
-  const llmForbidden = llm.forbiddenItems?.length
-    ? (normalizeBriefForbiddenBuckets(llm.forbiddenItems) as BriefForbiddenOption[])
-    : [];
-  if (llmForbidden.length) {
-    merged.forbiddenItems = [
-      ...new Set([...(local.forbiddenItems ?? []), ...llmForbidden]),
-    ] as BriefForbiddenOption[];
-    updatedFields.add('forbiddenItems');
-  } else if (!localHas('forbiddenItems')) {
+  // Запрещённые категории — только явные из текста, не из примера LLM
+  if (!localHas('forbiddenItems')) {
     updatedFields.delete('forbiddenItems');
     delete merged.forbiddenItems;
   }
 
-  // Свободнотекстовые запреты категорий («зонты», «кружки» — не из 6 forbidden-бакетов) —
-  // LLM авторитетна и ЗАМЕНЯЕТ регексный список (не объединяет), т.к. regex не различает
-  // «без X» = запрет товара X от «без X» = ценовая/презентационная оговорка (напр. «без упаковки»
-  // — LLM корректно относит это в notes, а не в forbiddenNamed). Регекс — фолбэк только на случай,
-  // если LLM недоступна вовсе (см. parseBriefFromPrompt: text.length < 8 или вся LLM-цепочка упала).
-  if (llm.forbiddenNamed) {
-    merged.forbiddenNamed = [...new Set(llm.forbiddenNamed)];
-    updatedFields.add('forbiddenItems');
-  }
-
-  // Кол-во предметов в наборе — LLM авторитетна, регекс — фолбэк.
-  if (llm.setItemCount != null) {
+  if (llm.setItemCount && !localHas('setItemCount')) {
     merged.setItemCount = llm.setItemCount;
     updatedFields.add('setItemCount');
   }

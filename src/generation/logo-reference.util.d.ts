@@ -1,0 +1,10 @@
+export declare function resolveUploadPath(url: string): string;
+export declare function resolveCatalogAssetPath(url: string): string | null;
+export declare function loadImageBase64(filePath: string): Promise<string | null>;
+export declare function loadLogoBase64(logoUrl: string, maxSide?: number): Promise<string | null>;
+export declare function loadLogoDataUri(logoUrl: string, maxSide?: number): Promise<string | null>;
+export declare function resolvePublicAssetUrl(assetPath: string, publicApiUrl: string): string | null;
+export declare function loadImageDataUriFromUrl(imageUrl: string, maxSide?: number): Promise<string | null>;
+export declare function normalizeAssetPath(url: string): string;
+export declare function loadCatalogImageDataUri(imageUrl: string, maxSide?: number): Promise<string | null>;
+export declare function describeLogoForPrompt(logoUrl: string): Promise<string>;

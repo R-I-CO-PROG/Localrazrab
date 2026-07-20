@@ -17,21 +17,10 @@ export interface AgentBriefContext {
   hasLogo?: boolean;
   includeCatalogConstraints?: boolean;
   projectProfile?: ProjectBriefProfile;
-  /** Повод/аудитория набора из LLM-классификации намерения брифа (VIP, Новый год, Раздаточные
-   *  материалы для ивентов, …) — тон/стиль для Ideator, НЕ фильтр категорий каталога. */
-  occasion?: string | null;
-  /** Материал ВСЕГО набора из LLM-классификации намерения брифа («полностью кожаный», «из дерева») —
-   *  жёсткое требование к каждой позиции. Ideator должен учитывать это в productSlots.notes; реальный
-   *  жёсткий фильтр пула кандидатов — в neuralSelector (requiredMaterial), это лишь доп. сигнал LLM. */
-  requiredMaterial?: string | null;
 }
 
 /** Единый payload брифа для Ideator и Critic */
 export function buildAgentBriefPayload(ctx: AgentBriefContext) {
-  // ИСКЛЮЧЕНИЯ («не предлагать алкоголь») — обещание пользователю в ЛЮБОМ режиме, включая
-  // креативный: LLM не должна придумывать набор с запрещённым предметом. Раньше при
-  // includeCatalogConstraints=false (креатив) mustAvoid обнулялся, и запреты просто исчезали.
-  // `themesToExplore` (allowedItems) — бакеты категорий КАТАЛОГА, для креатива не применимы.
   const profile =
     ctx.projectProfile ??
     extractProjectBriefProfile({
@@ -39,14 +28,16 @@ export function buildAgentBriefPayload(ctx: AgentBriefContext) {
       projectCategory: ctx.category,
       colors: ctx.colors,
       allowedItems: ctx.includeCatalogConstraints ? ctx.allowedItems : [],
-      forbiddenItems: ctx.forbiddenItems,
+      forbiddenItems: ctx.includeCatalogConstraints ? ctx.forbiddenItems : [],
     });
 
-  const catalogConstraints = {
-    themesToExplore:
-      ctx.includeCatalogConstraints !== false && ctx.allowedItems?.length ? ctx.allowedItems : null,
-    mustAvoid: ctx.forbiddenItems?.length ? ctx.forbiddenItems : null,
-  };
+  const catalogConstraints =
+    ctx.includeCatalogConstraints !== false
+      ? {
+          themesToExplore: ctx.allowedItems?.length ? ctx.allowedItems : null,
+          mustAvoid: ctx.forbiddenItems?.length ? ctx.forbiddenItems : null,
+        }
+      : { themesToExplore: null, mustAvoid: null };
 
   return {
     clientBrief: (!ctx.userQuery || String(ctx.userQuery).trim() === '' || String(ctx.userQuery).trim() === 'undefined') ? 'Бриф отсутствует (userQuery пуст или undefined)' : String(ctx.userQuery).trim(),
@@ -63,8 +54,6 @@ export function buildAgentBriefPayload(ctx: AgentBriefContext) {
         : { min: null, max: null },
     runQuantity: ctx.quantity ?? null,
     brandColors: ctx.colors ?? [],
-    occasion: ctx.occasion ?? null,
-    requiredMaterial: ctx.requiredMaterial ?? null,
     constraints: catalogConstraints,
     extraNotes: ctx.notes ?? null,
     hasLogo: Boolean(ctx.hasLogo),

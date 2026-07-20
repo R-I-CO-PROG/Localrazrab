@@ -1,0 +1,472 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- Auth & credits (Better Auth, совместимо с mercai.ru) ---
+
+enum UserRole {
+  USER
+  MANAGER
+  ADMIN
+}
+
+enum PlanType {
+  STARTER
+  BUSINESS
+  ENTERPRISE
+}
+
+enum CreditAction {
+  CONCEPT_GENERATION
+  VISUALIZATION
+  PDF_EXPORT
+  PPTX_EXPORT
+  DOCX_EXPORT
+  ADMIN_GRANT
+}
+
+model User {
+  id               String    @id
+  name             String    @default("")
+  email            String    @unique
+  emailVerified    Boolean   @default(false)
+  image            String?
+  role             UserRole  @default(USER)
+  blocked          Boolean   @default(false)
+  blockedAt        DateTime?
+  credits          Int       @default(0)
+  plan             PlanType  @default(STARTER)
+  stripeCustomerId String?
+  telegramId         String?   @unique
+  telegramUsername   String?
+  telegramVerifiedAt DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  sessions   Session[]
+  accounts   Account[]
+  creditLogs CreditLog[]
+  blacklistItems UserBlacklistItem[]
+  brandAssets BrandAsset[]
+  brandFolders BrandFolder[]
+  workspace   UserWorkspace?
+  aiPresentationJobs AiPresentationJob[]
+  requests    Request[]
+
+  @@map("user")
+}
+
+enum BrandAssetType {
+  logo
+  brandbook
+  banner
+}
+
+model BrandFolder {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assets BrandAsset[]
+
+  @@index([userId])
+  @@map("brand_folder")
+}
+
+model BrandAsset {
+  id           String         @id @default(cuid())
+  userId       String
+  folderId     String?
+  type         BrandAssetType
+  name         String
+  fileUrl      String
+  thumbnailUrl String?
+  mimeType     String
+  size         Int
+  metadata     Json?
+  deletedAt    DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  folder BrandFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([userId, type])
+  @@index([folderId])
+  @@map("brand_asset")
+}
+
+model UserWorkspace {
+  userId    String   @id
+  payload   Json
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_workspace")
+}
+
+enum BlacklistItemType {
+  product
+  supplier
+}
+
+model UserBlacklistItem {
+  id        String             @id @default(cuid())
+  userId    String
+  projectId String?
+  itemType  BlacklistItemType
+  itemId    String
+  title     String
+  createdAt DateTime           @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, itemType, itemId])
+  @@index([userId])
+  @@map("user_blacklist_item")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+model CreditLog {
+  id        String       @id @default(cuid())
+  userId    String
+  action    CreditAction
+  amount    Int
+  balance   Int
+  metadata  Json?
+  createdAt DateTime     @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// --- Тестер подбора (/admin/tester) ---
+
+model TesterRun {
+  id           String   @id @default(cuid())
+  createdAt    DateTime @default(now())
+  ok           Boolean  @default(false)
+  score        Int? // 0..100; null если прогон упал
+  elapsedSec   Int?
+  prompt       String // текст брифа
+  problemCount Int      @default(0)
+  error        String?
+  result       Json // полный снимок: concepts, products, rules, judge, problems
+
+  @@index([createdAt])
+  @@index([ok])
+}
+
+// --- Suvenir API models (не удалять при db push на общей БД) ---
+
+model Product {
+  id                 String        @id @default(cuid())
+  slug               String        @unique
+  name               String
+  category           String
+  subcategory        String?
+  description        String?
+  sourceId           String?
+  externalId         String?
+  price              Float?
+  currency           String        @default("RUB")
+  stockAvailable     Int           @default(0)
+  colors             Json          @default("[]")
+  sourceUrl          String?
+  silhouetteImageUrl String
+  catalogImageUrl    String?
+  widthCm            Float?
+  heightCm           Float?
+  depthCm            Float?
+  weightG            Float?
+  material           String?
+  embedding          Unsupported("vector(1536)")?
+  createdAt          DateTime      @default(now())
+  requestItems       RequestItem[]
+  brandings          ProductBranding[]
+
+  @@unique([sourceId, externalId])
+  @@index([category])
+  @@index([stockAvailable])
+  @@index([price])
+}
+
+enum RequestStatus {
+  draft
+  ready
+  generating
+  done
+  failed
+}
+
+model Request {
+  id                 String         @id @default(cuid())
+  userId             String?
+  title              String         @default("Новая концепция")
+  userPrompt         String         @default("")
+  category           String         @default("Welcome Pack")
+  budgetMin          Int?
+  budgetMax          Int?
+  quantity           Int?
+  setItemCount       Int?
+  useProductCountLimit Boolean      @default(true)
+  minProductsPerSet  Int?
+  maxProductsPerSet  Int?
+  conceptCount       Int            @default(5)
+  visualizationCount Int            @default(1)
+  colors             Json           @default("[]")
+  allowedItems       Json           @default("[]")
+  forbiddenItems     Json           @default("[]")
+  blacklistedProductIds Json        @default("[]")
+  blacklistedSupplierIds Json       @default("[]")
+  notes              String?
+  status             RequestStatus  @default(draft)
+  generationCount    Int            @default(0)
+  generationLockedAt DateTime?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  items              RequestItem[]
+  assets             Asset[]
+  generation         Generation?
+  agentRun           AgentRun?
+  precisionSession   PrecisionSession?
+  user               User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+}
+
+enum AgentRunStatus {
+  queued
+  running
+  awaiting_product_selection
+  awaiting_idea_selection
+  idea_selected
+  done
+  failed
+}
+
+enum AgentRoute {
+  DIRECT_PRODUCT
+  IDEATION_PIPELINE
+}
+
+model AgentRun {
+  id              String          @id @default(cuid())
+  requestId       String          @unique
+  status          AgentRunStatus  @default(queued)
+  route           AgentRoute?
+  currentStep     String?
+  routerOutput    Json?
+  ideatorOutput   Json?
+  criticOutput    Json?
+  promptOutput    Json?
+  directProducts  Json?
+  conceptsOutput  Json?
+  chosenIdeaTitle String?
+  imageResultUrl  String?
+  error           String?
+  debugEnabled    Boolean         @default(false)
+  debugLog        Json?
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  request         Request         @relation(fields: [requestId], references: [id], onDelete: Cascade)
+}
+
+model RequestItem {
+  id        String  @id @default(cuid())
+  requestId String
+  productId String
+  request   Request @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id])
+
+  @@unique([requestId, productId])
+}
+
+enum AssetType {
+  logo
+  reference
+}
+
+model Asset {
+  id        String    @id @default(cuid())
+  requestId String
+  type      AssetType
+  url       String
+  createdAt DateTime  @default(now())
+  request   Request   @relation(fields: [requestId], references: [id], onDelete: Cascade)
+}
+
+enum GenerationStatus {
+  queued
+  generating
+  done
+  failed
+}
+
+model Generation {
+  id             String                 @id @default(cuid())
+  requestId      String                 @unique
+  status         GenerationStatus       @default(queued)
+  inputSnapshot  Json
+  llmOutput      Json?
+  imagePrompt    String?
+  negativePrompt String?
+  resultImageUrl String?
+  conceptResults Json?
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime               @default(now())
+  request        Request                @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  variants       VisualizationVariant[]
+}
+
+model VisualizationVariant {
+  id              String     @id @default(cuid())
+  generationId    String
+  imageUrl        String
+  refinementBrief String?
+  imagePrompt     String?
+  sortOrder       Int        @default(0)
+  createdAt       DateTime   @default(now())
+  generation      Generation @relation(fields: [generationId], references: [id], onDelete: Cascade)
+
+  @@index([generationId, sortOrder])
+}
+
+
+enum AiPresentationStatus {
+  queued
+  analyzing_brand
+  generating_concept
+  generating_copy
+  generating_images
+  rendering_slides
+  exporting
+  completed
+  failed
+}
+
+model AiPresentationJob {
+  id        String               @id
+  userId    String?
+  title     String               @default("")
+  status    AiPresentationStatus @default(queued)
+  progress  Int                  @default(0)
+  data      Json
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@map("ai_presentation_job")
+}
+
+// --- Precision imprint mode (режим «Точное нанесение») ---
+
+model ProductBranding {
+  id           String  @id @default(cuid())
+  productId    String
+  product      Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  zoneName     String?
+  zoneNameRu   String?
+  methodRaw    String
+  methodCode   String
+  maxWidthMm   Int?
+  maxHeightMm  Int?
+  maxAreaMm2   Int?
+  maxColors    Int?
+  setupCost    Float?
+  zoneImageUrl String?
+  source       String
+
+  @@index([productId])
+  @@index([productId, methodCode])
+}
+
+model PrecisionSession {
+  id             String            @id @default(cuid())
+  requestId      String            @unique
+  request        Request           @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  sourceImageUrl String
+  productId      String?
+  outputMode     String            @default("edit")
+  config         Json
+  createdAt      DateTime          @default(now())
+  renders        PrecisionRender[]
+}
+
+model PrecisionRender {
+  id            String           @id @default(cuid())
+  sessionId     String
+  session       PrecisionSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  status        String           @default("queued")
+  draftImageUrl String?
+  imageUrl      String?
+  imagePrompt   String?
+  judgeVerdict  Json?
+  error         String?
+  sortOrder     Int              @default(0)
+  createdAt     DateTime         @default(now())
+
+  @@index([sessionId, sortOrder])
+}

@@ -1,0 +1,13 @@
+import type { CatalogProduct } from '../providers/llm/catalog.util';
+export declare const BRIEF_ALLOWED_BUCKETS: readonly ["Одежда", "Сумки и рюкзаки", "Термосы и бутылки", "Кружки", "Ручки", "Ежедневники и блокноты", "Электроника", "Подарочные наборы", "Отдых и спорт", "Зонты", "Посуда", "Офис и канцелярия", "Сувениры и награды", "Солнцезащитные очки", "Свечи и подсвечники", "Аксессуары для путешествий", "Кошельки и монетницы", "Мультитулы", "Текстиль"];
+export declare const BRIEF_FORBIDDEN_BUCKETS: readonly ["Алкоголь", "Еда", "Одежда", "Косметика", "Стекло", "Другое"];
+export type BriefAllowedBucket = (typeof BRIEF_ALLOWED_BUCKETS)[number];
+export type BriefForbiddenBucket = (typeof BRIEF_FORBIDDEN_BUCKETS)[number];
+export declare function normalizeBriefAllowedBuckets(items: string[]): BriefAllowedBucket[];
+export declare function normalizeBriefForbiddenBuckets(items: string[]): BriefForbiddenBucket[];
+export declare function productMatchesAllowedBucket(product: CatalogProduct, bucket: BriefAllowedBucket): boolean;
+export declare function productMatchesForbiddenBucket(product: CatalogProduct, bucket: BriefForbiddenBucket): boolean;
+export declare function filterCatalogByBriefBuckets(catalog: CatalogProduct[], allowedItems: string[], forbiddenItems: string[]): CatalogProduct[];
+export declare const BUCKET_SOFT_KEYWORDS: Record<BriefAllowedBucket, string[]>;
+export declare function productMatchesRequiredCategory(product: CatalogProduct, categoryKey: string): boolean;
+export declare function countProductsInRequiredCategory(products: CatalogProduct[], categoryKey: string): number;

@@ -1,0 +1,124 @@
+import { AgentRunService } from './agent-run.service';
+export declare class AgentRunController {
+    private readonly agentRunService;
+    constructor(agentRunService: AgentRunService);
+    start(requestId: string, body?: {
+        debug?: boolean;
+        aiStyle?: 'catalog' | 'creative';
+    }): Promise<{
+        error: string | null;
+        id: string;
+        createdAt: Date;
+        chosenIdeaTitle: string | null;
+        status: import("@prisma/client").$Enums.AgentRunStatus;
+        updatedAt: Date;
+        requestId: string;
+        startedAt: Date | null;
+        finishedAt: Date | null;
+        route: import("@prisma/client").$Enums.AgentRoute | null;
+        currentStep: string | null;
+        routerOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        ideatorOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        criticOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        promptOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        directProducts: import("@prisma/client/runtime/library").JsonValue | null;
+        conceptsOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        imageResultUrl: string | null;
+        debugEnabled: boolean;
+        debugLog: import("@prisma/client/runtime/library").JsonValue | null;
+    } | null>;
+    get(requestId: string): Promise<{
+        error: string | null;
+        id: string;
+        createdAt: Date;
+        chosenIdeaTitle: string | null;
+        status: import("@prisma/client").$Enums.AgentRunStatus;
+        updatedAt: Date;
+        requestId: string;
+        startedAt: Date | null;
+        finishedAt: Date | null;
+        route: import("@prisma/client").$Enums.AgentRoute | null;
+        currentStep: string | null;
+        routerOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        ideatorOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        criticOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        promptOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        directProducts: import("@prisma/client/runtime/library").JsonValue | null;
+        conceptsOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        imageResultUrl: string | null;
+        debugEnabled: boolean;
+        debugLog: import("@prisma/client/runtime/library").JsonValue | null;
+    }>;
+    selectConcept(requestId: string, body: {
+        chosenIdeaTitle: string;
+    }): Promise<{
+        error: string | null;
+        id: string;
+        createdAt: Date;
+        chosenIdeaTitle: string | null;
+        status: import("@prisma/client").$Enums.AgentRunStatus;
+        updatedAt: Date;
+        requestId: string;
+        startedAt: Date | null;
+        finishedAt: Date | null;
+        route: import("@prisma/client").$Enums.AgentRoute | null;
+        currentStep: string | null;
+        routerOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        ideatorOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        criticOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        promptOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        directProducts: import("@prisma/client/runtime/library").JsonValue | null;
+        conceptsOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        imageResultUrl: string | null;
+        debugEnabled: boolean;
+        debugLog: import("@prisma/client/runtime/library").JsonValue | null;
+    } | null>;
+    continue(requestId: string, body: {
+        chosenIdeaTitle?: string;
+    }): Promise<{
+        error: string | null;
+        id: string;
+        createdAt: Date;
+        chosenIdeaTitle: string | null;
+        status: import("@prisma/client").$Enums.AgentRunStatus;
+        updatedAt: Date;
+        requestId: string;
+        startedAt: Date | null;
+        finishedAt: Date | null;
+        route: import("@prisma/client").$Enums.AgentRoute | null;
+        currentStep: string | null;
+        routerOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        ideatorOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        criticOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        promptOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        directProducts: import("@prisma/client/runtime/library").JsonValue | null;
+        conceptsOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        imageResultUrl: string | null;
+        debugEnabled: boolean;
+        debugLog: import("@prisma/client/runtime/library").JsonValue | null;
+    } | null>;
+    retry(requestId: string, body?: {
+        aiStyle?: 'catalog' | 'creative';
+    }): Promise<{
+        error: string | null;
+        id: string;
+        createdAt: Date;
+        chosenIdeaTitle: string | null;
+        status: import("@prisma/client").$Enums.AgentRunStatus;
+        updatedAt: Date;
+        requestId: string;
+        startedAt: Date | null;
+        finishedAt: Date | null;
+        route: import("@prisma/client").$Enums.AgentRoute | null;
+        currentStep: string | null;
+        routerOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        ideatorOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        criticOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        promptOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        directProducts: import("@prisma/client/runtime/library").JsonValue | null;
+        conceptsOutput: import("@prisma/client/runtime/library").JsonValue | null;
+        imageResultUrl: string | null;
+        debugEnabled: boolean;
+        debugLog: import("@prisma/client/runtime/library").JsonValue | null;
+    } | null>;
+}

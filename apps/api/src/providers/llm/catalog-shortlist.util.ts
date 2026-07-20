@@ -4,7 +4,6 @@ import { indexCatalogByProductType } from './catalog-slot-picker.util';
 import {
   buildBriefRelevanceContext,
   scoreBriefRelevanceWithContext,
-  parseBriefForbiddenColors,
   type BriefRelevanceContext,
 } from './catalog-brief-relevance.util';
 import {
@@ -12,7 +11,6 @@ import {
   colorCriticalClash,
   isColorCriticalProduct,
   productMatchesRequestedColorFamily,
-  productHasForbiddenColor,
 } from './catalog-color-match.util';
 import {
   hasValidProductImage,
@@ -20,13 +18,11 @@ import {
   isLowRelevanceJunk,
 } from '../../concept/selection-constraints';
 import { familyForType } from '../../concept/product-taxonomy';
-import { scoreAudienceNeedsMatch, scoreArchetypeMatch, scoreGiftWorthiness, scoreDesirability, scoreConceptCoherence } from './catalog-context-scoring.util';
+import { scoreContextBonus, scoreArchetypeMatch, scoreGiftWorthiness } from './catalog-context-scoring.util';
 import { detectConceptProductType, OPTIONAL_TYPE_MAX_CONCEPTS } from './concept-diversity.util';
-import { productMatchesForbidden } from './catalog-forbidden-match.util';
 import { productFulfillsTirage } from './catalog-fulfillment.util';
 import type { SelectionLedger } from './catalog-selection-ledger';
 import type { ShortlistContext, SlotShortlist } from './catalog-neural-selector.types';
-import { productMatchesMaterial } from './material-match.util';
 
 const DEFAULT_PER_SLOT_SIZE = 20;
 
@@ -44,15 +40,6 @@ function isNeverInGiftSet(p: CatalogProduct, brief: string): boolean {
   const forMen = /(мужчин|джентльм|\bпап|\bотц|23\s*фев|защитник)/.test(b);
   if (forWomen && /(?<![а-яё])мужск[а-яё]*/.test(n)) return true;
   if (forMen && /(?<![а-яё])женск[а-яё]*/.test(n)) return true;
-  // ДЕТСКИЕ товары (одежда/игрушки) в подарке ВЗРОСЛОЙ аудитории — грубый промах релевантности
-  // (судья: «детская футболка совершенно не соответствует женщинам-сотрудницам»). Пускаем только
-  // если бриф явно про детей/семью/школу.
-  const briefForKids = /детск|для\s*детей|ребён|ребен|(?<![а-яё])дет[еяи]|школьник|малыш|семейн|для\s*всей\s*семьи/.test(b);
-  if (!briefForKids && /(?<![а-яё])детск[а-яё]*/.test(n)) return true;
-  // ПРАЗДНИЧНАЯ АТРИБУТИКА не по поводу: новогодний/рождественский декор (ёлки/олени/Дед Мороз)
-  // в НЕ-новогоднем брифе — грубый промах (судья: «врачам не нужны свечи с оленями и ёлками»).
-  const briefIsWinterHoliday = /новогодн|нов[а-яё]*\s*год|рождеств|зимн|(?<![а-яё])[её]лк/.test(b);
-  if (!briefIsWinterHoliday && /новогодн|рождеств|[её]лочн|(?<![а-яё])[её]лк[аи]|дед\s*мороз|снегур|санта[\s-]?клаус|адвент/.test(n)) return true;
   return false;
 }
 
@@ -82,13 +69,8 @@ const EXCLUSION_SLUG_RULES: Array<{ re: RegExp; slugs: Set<string> }> = [
  * Исключён ли товар по брифу «Исключения». Матчим по КАТЕГОРИИ-бакету и по ТИПУ-slug,
  * НЕ по сырому имени (иначе «сумка с ручками» ложно попадает под запрет «ручки»).
  */
-export function isExcluded(p: CatalogProduct, excluded?: string[]): boolean {
+function isExcluded(p: CatalogProduct, excluded?: string[]): boolean {
   if (!excluded?.length) return false;
-  // СИЛЬНЫЙ матчер (стем/семейства-синонимы/кириллица+латиница по name+описанию+категории) —
-  // ловит свободнотекстовые чипы «пауэр банки»/«колонки беспроводные»/«аккумуляторы», которые
-  // slug/категория-логика ниже пропускала (мис-типизация, латиница). UNION: старую логику
-  // сохраняем для КОРОТКИХ терминов вроде «ручки» (стем <5 → матч по имени дал бы «сумку с ручками»).
-  if (productMatchesForbidden(p, excluded)) return true;
   const norm = (s: unknown) => String(s ?? '').toLowerCase().replace(/ё/g, 'е');
   const cat = `${norm(p.category)} ${norm(p.subcategory)}`;
   const catWords = cat.split(/[^а-яa-z0-9]+/i).filter((w) => w.length >= 3);
@@ -108,19 +90,6 @@ export function isExcluded(p: CatalogProduct, excluded?: string[]): boolean {
 }
 
 /** Лёгкий гейт: только жёсткая валидность (картинка/цена/бюджет/исключения/реестр). */
-/** Запрещённые брифом цвета («без красного») — parseBriefForbiddenColors регексповая, а гейт
- *  зовётся на каждый из десятков тысяч кандидатов. Мемоизируем по тексту брифа. */
-const forbiddenColorCache = new Map<string, string[]>();
-export function briefForbiddenColorHints(brief: string): string[] {
-  let hints = forbiddenColorCache.get(brief);
-  if (hints === undefined) {
-    hints = parseBriefForbiddenColors(brief);
-    if (forbiddenColorCache.size > 200) forbiddenColorCache.clear();
-    forbiddenColorCache.set(brief, hints);
-  }
-  return hints;
-}
-
 function passesGateLight(
   p: CatalogProduct,
   ctx: ShortlistContext,
@@ -133,11 +102,7 @@ function passesGateLight(
   // Цвето-критичный товар (плед/сумка/зонт/одежда/посуда) в ЯВНО чужом цвете — НЕ пускаем
   // даже в последний добор: для красного бренда не должно быть фуксии/тёмно-синего пледа.
   // Нейтраль и не-цветокритичное (электроника) проходят. brandColors берём из ctx.
-  if (!ctx.relaxColorClash && colorCriticalClash(p, ctx.brandColors)) return false;
-  // ЯВНО ЗАПРЕЩЁННЫЙ БРИФОМ ЦВЕТ («без красного») — жёстко и для ЛЮБОГО типа товара. Раньше цвет
-  // жил только в скоринге и в терминальном бэкстопе, поэтому LLM-байер видел пул, полный
-  // запрещённо-цветных SKU, и «выбирал» их — а бэкстоп потом молча вырезал и добирал заново.
-  if (productHasForbiddenColor(p, briefForbiddenColorHints(ctx.brief))) return false;
+  if (colorCriticalClash(p, ctx.brandColors)) return false;
   if (ctx.budgetPerSet != null && ctx.budgetPerSet > 0) {
     const price = p.price ?? 0;
     if (price > ctx.budgetPerSet) return false;
@@ -165,15 +130,6 @@ export const FULFILLMENT_SHORTFALL_PENALTY = -18;
 /** Порог «жёстко зарезанного» товара: reject-правила дают −120…−220; всё ниже −70 — это
  *  «не в этот бриф» (ножи для сыра онбордингу, скакалка врачу), в резерв добора не пускаем. */
 const RELAX_HARD_REJECT_FLOOR = -70;
-
-/** Потолок положительной части keyword-релевантности в scoreRow: не даёт keyword-stuffing
- *  доминировать над semanticFit и заодно ограничивает вклад premium-theme (тройной премиум-счёт). */
-const BASE_POSITIVE_CAP = 70;
-
-/** Вес semanticFit (±0.15) в scoreRow. ×120 (было ×100) — семантика теперь конкурирует с
- *  клампнутой keyword-базой (≤70), но по модулю остаётся < variety-cap (−150), не воскрешая
- *  заблокированные семейства. ×155 переусиливал (зарядки-врачу в 4 набора) — 120 безопаснее. */
-const SEMANTIC_WEIGHT = 120;
 
 /**
  * Ценовой сигнал позиции (цена=ценность). Асимметричная кривая вокруг цены-на-предмет
@@ -205,43 +161,13 @@ export function scorePriceCurve(
   return s;
 }
 
-/** Скоринг кандидата: релевантность брифу + совпадение бренд-цветов + близость к доле бюджета.
- *  Экспортирован для юнит-теста клампа semanticFit (G4, пере-скан). */
-/**
- * Сортировка по scoreRow по УБЫВАНИЮ с мемоизацией: scoreRow (regex-тяжёлая — productText +
- * десятки regex-тестов) считается ПО ОДНОМУ разу на строку, а не O(n·log n) раз в компараторе
- * (каждое сравнение звало scoreRow дважды). Сортирует и возвращает тот же массив.
- */
-export function sortByScoreDesc(
-  rows: CatalogProduct[],
-  relCtx: BriefRelevanceContext,
-  ctx: ShortlistContext,
-): CatalogProduct[] {
-  const cache = new Map<CatalogProduct, number>();
-  const s = (p: CatalogProduct): number => {
-    let v = cache.get(p);
-    if (v === undefined) {
-      v = scoreRow(p, relCtx, ctx);
-      cache.set(p, v);
-    }
-    return v;
-  };
-  return rows.sort((a, b) => s(b) - s(a));
-}
-
-export function scoreRow(
+/** Скоринг кандидата: релевантность брифу + совпадение бренд-цветов + близость к доле бюджета. */
+function scoreRow(
   p: CatalogProduct,
   relCtx: BriefRelevanceContext,
   ctx: ShortlistContext,
 ): number {
   let score = scoreBriefRelevanceWithContext(p, relCtx);
-  // КЛАМП keyword-базы (только положительной части): базовая релевантность неограничена
-  // (+6/токен + theme-бонусы до +60), поэтому «мусор с удачным неймингом» (много брифовых токенов
-  // в названии/описании) набирал 100+ и топил семантически-профильный товар со скромным именем, но
-  // высоким semanticFit (±15). Кламп на 70 сохраняет сильные reject-негативы (проходят как есть) и
-  // легитимную тему, но не даёт keyword-stuffing доминировать над смыслом. Также ограничивает вклад
-  // premium-theme (часть тройного премиум-счёта).
-  if (score > 0) score = Math.min(BASE_POSITIVE_CAP, score);
   if (ctx.brandColors.length) {
     // Цвето-критичные товары (одежда/сумки/зонты/плед/посуда) сильнее тянем к бренд-цвету;
     // у нейтральных/электроники вес меньше (цвет у них вторичен).
@@ -253,35 +179,18 @@ export function scoreRow(
     const premium = relCtx.flags?.premium === true;
     score += scorePriceCurve(p.price ?? 0, ctx.budgetPerSet, ctx.expectedItems ?? 5, premium);
   }
-  // Потребности аудитории (визитница продажнику, плед врачу). ≤ AUDIENCE_CAP, < variety −150.
-  score += scoreAudienceNeedsMatch(p, ctx.audienceNeeds);
-  // СВЯЗНОСТЬ С ТЕМОЙ КОНЦЕПЦИИ: +тематичный, −ломающий вайб (рюкзак в «уюте», зонт в «работе»).
-  // ЕДИНСТВЕННЫЙ канал темы: раньше тема считалась ДВАЖДЫ — scoreConceptThemeMatch (+18, внутри
-  // scoreContextBonus) И scoreConceptCoherence (+24) на ОДНОМ предикате (axis.titleKey &&
-  // axis.productMatch), суммарно +42 за один сигнал. Coherence сильнее (24>18) и добавляет
-  // штраф-ветку, поэтому themeMatch избыточен — убран из scoreRow. По модулю < variety −150.
-  score += scoreConceptCoherence(p, ctx.conceptTitle, ctx.conceptComposition);
-  // СЕМАНТИКА: fit к интенту подарка аудитории (cos+ − cos−), ±0.15 → ±15. Различает смысл там,
-  // где keyword слеп («документов» vs «багажника»). Сбалансированный вес: ×155 переусиливал пул
-  // (зарядки-врачу в 4 набора → повтор). По модулю < variety −150.
-  // КЛАМП (G4, пере-скан): fit = cos⁺−cos⁻ математически НЕ ограничен ±0.15 (разность двух
-  // косинусных близостей теоретически до ±2) — комментарий выше описывает ТИПИЧНЫЙ, но не
-  // гарантированный диапазон. Без клампа редкий выброс (битый вектор/дрейф модели) мог бы дать
-  // score сотни пунктов, перебивая variety-cap (−150) и другие сигналы. Клампим к заявленному ±0.15.
-  if (p.semanticFit != null) {
-    score += Math.max(-0.15, Math.min(0.15, p.semanticFit)) * SEMANTIC_WEIGHT;
-  }
+  // Концепто-контекст: тема набора («Эко»/«Премиум») + потребности аудитории (визитница
+  // продажнику, плед врачу). Аддитивно, суммарно ≤ CONTEXT_BONUS_CAP и строго < variety −150 —
+  // двигает выбор ВНУТРИ релевантного, не воскрешает заблокированные семейства и не спасает off-brief.
+  score += scoreContextBonus(p, ctx.conceptTitle, ctx.conceptComposition, ctx.audienceNeeds);
+  // СЕМАНТИКА: fit к интенту подарка аудитории (cos+ − cos−), ±0.15 → ±23. Различает смысл там,
+  // где keyword слеп («документов» vs «багажника»). Сильный сигнал релевантности аудитории, но
+  // по модулю < variety −150.
+  if (p.semanticFit != null) score += p.semanticFit * 155;
   // Архетип подарка концепции: целевой тип истории (+), сувенирная дешёвка по типу (−). Плюс
   // name-based «подарочность»: штраф сувенирным формам (флешка-в-виде-X, обложка паспорта,
   // антистресс) во всех брифах. Оба по модулю < variety −150.
-  score += scoreArchetypeMatch(p, ctx.archetype, ctx.budgetPerSet) + scoreGiftWorthiness(p) + scoreDesirability(p);
-  // МАТЕРИАЛ НАБОРА («полностью кожаный») — сильное предпочтение, но НЕ жёсткий отсев: бонус
-  // сравним по модулю с архетипом/аудиторией (< variety −150), чтобы кожаный вариант побеждал
-  // при прочих равных внутри уже тематически подходящих кандидатов, но НЕ перебивал явный
-  // анти-фит по аудитории/архетипу (иначе снова получим кожаную косметичку строителю).
-  if (ctx.requiredMaterial && productMatchesMaterial(p, ctx.requiredMaterial)) {
-    score += 40;
-  }
+  score += scoreArchetypeMatch(p, ctx.archetype, ctx.budgetPerSet) + scoreGiftWorthiness(p);
   // Мягкий межконцептовый анти-однообразие: если семейство уже было в ≥2 наборах —
   // штрафуем (плед/сумка/зонт не должны быть во всех 5). НЕ жёсткий отсев (контракт).
   if (ctx.familyUsage && ctx.familyUsage.size) {
@@ -339,7 +248,7 @@ export function buildSlotShortlists(
           .filter((p) => !rows.some((r) => r.id === p.id));
         rows = rows.concat(extra);
       }
-      sortByScoreDesc(rows, relCtx, ctx);
+      rows.sort((a, b) => scoreRow(b, relCtx, ctx) - scoreRow(a, relCtx, ctx));
       return { slot, candidates: rows.slice(0, perSlot) };
     } catch {
       return { slot, candidates: [] };
@@ -416,14 +325,6 @@ export function buildConceptPool(
         // Ещё раньше цвета — покрытие тиража: при тираже 155 проектор со стоком 445
         // полезнее флагмана со стоком 1.
         const tirage = ctx.tirage ?? 0;
-        // scoreRow тяжёлая — считаем ПО РАЗУ на кандидата (тай-брейк в компараторе иначе звал бы
-        // её O(n·log n) раз).
-        const rowScore = new Map<CatalogProduct, number>();
-        const sr = (p: CatalogProduct): number => {
-          let v = rowScore.get(p);
-          if (v === undefined) { v = scoreRow(p, relCtx, ctx); rowScore.set(p, v); }
-          return v;
-        };
         cands.sort((a, b) => {
           if (tirage > 0) {
             const sa = (a.stockAvailable ?? 0) >= tirage ? 1 : 0;
@@ -438,7 +339,7 @@ export function buildConceptPool(
             const cd = scoreBrandColorMatch(b, ctx.brandColors) - scoreBrandColorMatch(a, ctx.brandColors);
             if (Math.abs(cd) > 1) return cd;
           }
-          return sr(b) - sr(a);
+          return scoreRow(b, relCtx, ctx) - scoreRow(a, relCtx, ctx);
         });
         for (const p of cands.slice(0, perType)) {
           if (out.length >= size) break;
@@ -448,7 +349,9 @@ export function buildConceptPool(
     }
 
     // Проход 1: РЕЛЕВАНТНЫЕ брифу (полный гейт), с лимитом на категорию.
-    const onBrief = sortByScoreDesc(catalog.filter((p) => passesGate(p, ctx, ledger)), relCtx, ctx);
+    const onBrief = catalog
+      .filter((p) => passesGate(p, ctx, ledger))
+      .sort((a, b) => scoreRow(b, relCtx, ctx) - scoreRow(a, relCtx, ctx));
     for (const p of onBrief) {
       if (out.length >= size) break;
       if ((catCount.get(p.category || 'other') ?? 0) >= perCategoryCap) continue;
@@ -476,7 +379,7 @@ export function buildConceptPool(
       if (light.length === 0) {
         light = broadCatalog.filter((p) => !have.has(p.id) && passesGateLight(p, ctx, ledger));
       }
-      sortByScoreDesc(light, relCtx, ctx);
+      light.sort((a, b) => scoreRow(b, relCtx, ctx) - scoreRow(a, relCtx, ctx));
       for (const p of light) {
         if (out.length >= size || distinctCats() >= minCategories) break;
         const c = p.category || 'other';
@@ -529,7 +432,7 @@ export function relaxShortlist(
     );
     // Фолбэк: если жёсткий фильтр выкосил всё (совсем нишевый бриф) — возвращаемся к лёгкому гейту.
     const base = relaxed.length ? relaxed : catalog.filter((p) => !exclude.has(p.id) && passesGateLight(p, ctx, ledger));
-    return sortByScoreDesc(base, relCtx, ctx).slice(0, perSlot);
+    return base.sort((a, b) => scoreRow(b, relCtx, ctx) - scoreRow(a, relCtx, ctx)).slice(0, perSlot);
   } catch {
     return [];
   }

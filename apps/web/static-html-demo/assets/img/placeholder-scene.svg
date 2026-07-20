@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="800" viewBox="0 0 800 800">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#87CEEB"/>
+      <stop offset="100%" stop-color="#E8F5E9"/>
+    </linearGradient>
+    <linearGradient id="grass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7CB342"/>
+      <stop offset="100%" stop-color="#558B2F"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="800" fill="url(#sky)"/>
+  <ellipse cx="400" cy="620" rx="420" ry="120" fill="url(#grass)"/>
+  <rect x="180" y="480" width="440" height="140" rx="8" fill="#F5E6C8" opacity="0.95"/>
+  <text x="400" y="420" text-anchor="middle" fill="#374151" font-family="system-ui,sans-serif" font-size="22" font-weight="600">AI-287C0;870F8O (45<>)</text>
+  <text x="400" y="455" text-anchor="middle" fill="#6B7280" font-family="system-ui,sans-serif" font-size="14">Lifestyle-AF5=0 · 703;CH:0</text>
+  <rect x="220" y="510" width="90" height="70" rx="6" fill="#2563EB"/>
+  <rect x="340" y="520" width="70" height="50" rx="4" fill="#7C3AED"/>
+  <rect x="450" y="515" width="100" height="60" rx="6" fill="#F5F5DC" stroke="#D1D5DB"/>
+  <rect x="570" y="525" width="80" height="55" rx="4" fill="#2563EB" opacity="0.8"/>
+  <ellipse cx="300" cy="590" rx="35" ry="20" fill="#7C3AED" opacity="0.7"/>
+</svg>

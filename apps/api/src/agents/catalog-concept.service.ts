@@ -3,7 +3,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { LlmBriefService } from '../providers/llm/llm-brief.service';
-import { cleanDisplayCategory } from '../providers/llm/catalog-display-category.util';
 
 import { LlmProviderFactory } from '../providers/llm/llm.provider';
 
@@ -73,7 +72,6 @@ import {
   extractBriefColorsFromText,
   inferDefaultBudgetForBrief,
   parseBriefLocally,
-  parseAllowedCategories,
 } from '../requests/parse-brief.util';
 import { normalizeRequestColors, expandAbstractColorsFromText } from '../requests/request-colors.util';
 import { resolveMandatoryTypesForBrief } from '../requests/mandatory-types.util';
@@ -81,18 +79,8 @@ import {
   isDirectedBriefMode,
   isExclusiveBriefMode,
   resolveNamedItemsForBrief,
-  resolveNamedPositionSpecsForBrief,
   splitAllowedItemsMixed,
 } from '../requests/named-positions.util';
-import {
-  isSingleProductBrief,
-  detectSingleProductType,
-  searchDirectCatalogProducts,
-} from '../providers/llm/catalog-direct-search.util';
-import {
-  shouldProbeSingleProductViaLLM,
-  buildTermRegex,
-} from '../providers/llm/catalog-single-product-llm.util';
 import { generateLocalCatalogIdeas } from '../providers/llm/catalog-local-ideator.util';
 
 import {
@@ -150,15 +138,13 @@ import {
   hasValidProductPrice,
   isLowRelevanceJunk,
   productPassesQualityGate,
-  enforceSetHardConstraints,
-  type SelectionConstraintsInput,
   type SelectionValidationReport,
 } from '../concept/selection-constraints';
 import { detectProductRole, isCorporateSetFiller } from '../concept/product-role.util';
-import { familyForType, coarseFamilyOf } from '../concept/product-taxonomy';
+import { familyForType } from '../concept/product-taxonomy';
 import { CRITIC_TOP_N } from './agent.constants';
 import { OpenrouterAgentClient } from './openrouter-agent.client';
-import { CatalogNeuralSelectorService, CATCHALL_FAMILIES } from './catalog-neural-selector.service';
+import { CatalogNeuralSelectorService } from './catalog-neural-selector.service';
 import { CatalogEmbeddingService } from './catalog-embedding.service';
 import { SelectionLedger } from '../providers/llm/catalog-selection-ledger';
 import type { ConceptBoldness } from '../providers/llm/catalog-neural-selector.types';
@@ -186,7 +172,7 @@ export interface CatalogDiscoverResult {
 
   criticOutput?: CriticOutput;
 
-  pipeline: 'ideator_critic' | 'legacy_llm' | 'fallback' | 'direct_catalog';
+  pipeline: 'ideator_critic' | 'legacy_llm' | 'fallback';
 
   timingMs?: number;
 
@@ -487,48 +473,16 @@ export class CatalogConceptService {
       stratifiedMax,
       timing,
     );
+    const fullCatalog = catalogPipeline.relevance;
     const filteredCatalog = catalogPipeline.filtered;
-    // G3 (пере-скан): relevance/broad клонируем ПЕРЕД любой мутацией ниже (unshift/semanticFit).
-    // Их ТОВАРНЫЕ ОБЪЕКТЫ разделяются с ДРУГИМИ брифами через кэш сырых кандидатов
-    // (rawCandidatesCacheKey НЕ ключуется по userPrompt — только по categoryGroup+бюджету+тиражу+
-    // seed+timeBucket), хотя сам pipeline-результат кэшируется по промпту отдельно. Прямая мутация
-    // писала бы в общие объекты, «заражая» semanticFit параллельных/последующих запросов той же
-    // группы/бюджета остаточным значением от ЭТОГО брифа. Клон — дешёвый (shallow), т.к. ниже
-    // мутируется только примитивное поле semanticFit.
-    const relevanceCatalog: CatalogProduct[] = catalogPipeline.relevance.map((p) => ({ ...p }));
-    const fullCatalog = relevanceCatalog;
+    const relevanceCatalog = catalogPipeline.relevance;
     // Широкий пул всех категорий (до eco/relevance-сужения) — для диверсификации и
     // добора нишевых брифов, где relevance схлопывается до десятков SKU (эко=18 сумок).
-    const broadCatalog: CatalogProduct[] = (
-      catalogPipeline.broad?.length ? catalogPipeline.broad : filteredCatalog
-    ).map((p) => ({ ...p }));
+    const broadCatalog = catalogPipeline.broad?.length ? catalogPipeline.broad : filteredCatalog;
     const catalogForLlm = catalogPipeline.forLlm;
     const catalogOverview = catalogPipeline.overview;
+    const catalogTypeIndex = catalogPipeline.typeIndex;
     const fastPipeline = this.config.get<string>('CATALOG_FAST_PIPELINE', 'true') !== 'false';
-
-    // СЕМАНТИЧЕСКИЙ RETRIEVAL (флаг CATALOG_SEMANTIC_RETRIEVAL, дефолт on): тянем топ сильно-
-    // профильных товаров под аудиторию из ВСЕГО каталога (51k) через pgvector и вкладываем в
-    // relevance/broad — чтобы профильные позиции (визитница/папка/маска для сна) гарантированно
-    // попали в пул каждого набора, а не терялись в keyword-срезе. Их semanticFit уже проставлен.
-    if (this.config.get<string>('CATALOG_SEMANTIC_RETRIEVAL', 'true') !== 'false') {
-      try {
-        const profile = await this.embeddingService.topProfileProducts(request.userPrompt, {
-          budgetMax: request.budgetMax ?? filterInput.budgetMax,
-          tirage: request.quantity ?? filterInput.quantity,
-          limit: 80,
-        });
-        if (profile.length) {
-          const relIds = new Set(relevanceCatalog.map((p) => p.id));
-          const fresh = profile.filter((p) => !relIds.has(p.id));
-          relevanceCatalog.unshift(...fresh);
-          const brIds = new Set(broadCatalog.map((p) => p.id));
-          broadCatalog.unshift(...profile.filter((p) => !brIds.has(p.id)));
-          this.logger.log(`Semantic retrieval инжект: +${fresh.length} профильных в relevance (из ${profile.length})`);
-        }
-      } catch (e) {
-        this.logger.warn(`Semantic retrieval skipped: ${(e as Error).message}`);
-      }
-    }
 
     // СЕМАНТИЧЕСКОЕ ОБОГАЩЕНИЕ (флаг CATALOG_SEMANTIC_FIT, дефолт on): проставляем каждому
     // кандидату semanticFit к интенту подарка аудитории через pgvector. Различает «органайзер для
@@ -547,210 +501,20 @@ export class CatalogConceptService {
       }
     }
 
-    // G3-фикс (найден состязательным ревью самого G3-клона): typeIndex ДОЛЖЕН строиться из
-    // relevanceCatalog ПОСЛЕ клонирования+инжекта+обогащения — иначе он остаётся Map'ом старых,
-    // не клонированных объектов из catalogPipeline.typeIndex (без unshift-профиля и без
-    // semanticFit), и любой путь ниже, добирающий кандидатов через catalogTypeIndex (а не напрямую
-    // из relevanceCatalog/broadCatalog), тихо терял семантическое обогащение для того же самого SKU.
-    const catalogTypeIndex = indexCatalogByProductType(relevanceCatalog);
-
     this.logger.log(
       `Catalog pipeline: ${catalogPipeline.totalInDb} total, ${filteredCatalog.length} filtered, ` +
         `${relevanceCatalog.length} relevance-scored, ${catalogOverview.categories.length} categories`,
     );
 
-    // КЛАССИФИКАЦИЯ НАМЕРЕНИЯ БРИФА (LLM, единая точка входа): точная позиция ОДНОГО товара
-    // («белый повербанк на 5000 мАч») vs идея/набор («подарок команде на 8 марта»). Раньше решение
-    // принимал словарь ~45 товаров + узкий LLM-фолбэк ТОЛЬКО когда словарь молчал; теперь LLM всегда
-    // классифицирует бриф целиком и её решение приоритетнее словаря — словарь остаётся быстрым
-    // локальным сигналом и источником nameRe/slug для точечного поиска, когда термин LLM в него попадает.
-    // Best-effort: ошибка/таймаут/выкл.флаг LLM → фолбэк на старую словарную эвристику.
-    let detectedProduct = detectSingleProductType(request.userPrompt);
-    let singleType =
-      detectedProduct?.slug ??
-      (namedResolved.namedTypes.length === 1 ? namedResolved.namedTypes[0]! : null);
-    let intentMaterial: string | null = null;
-    let intentColor: string | null = null;
-    let intentCharacteristic: string | null = null;
-    let intentOccasion: string | null = null;
-    let intentPurpose: string | null = null;
-    let intentForcedIdea = false;
 
-    const briefIntentOn = this.config.get<string>('CATALOG_BRIEF_INTENT_LLM', 'true') !== 'false';
-    if (briefIntentOn && shouldProbeSingleProductViaLLM(request.userPrompt)) {
-      const intent = await this.llmBrief.classifyBriefIntent(request.userPrompt);
-      if (intent.mode === 'exact_position' && intent.term) {
-        const dictHit = detectSingleProductType(intent.term);
-        const nameRe = dictHit?.nameRe ?? buildTermRegex(intent.term);
-        if (nameRe) {
-          const slug = dictHit?.slug ?? `llm_${intent.term.toLowerCase().replace(/ё/g, 'е').replace(/[^a-zа-я0-9]+/gi, '_')}`;
-          detectedProduct = { slug, nameRe, term: intent.term };
-          singleType = slug;
-          intentMaterial = intent.material;
-          intentColor = intent.color;
-          intentCharacteristic = intent.characteristic;
-          this.logger.log(
-            `LLM brief-intent: exact_position term="${intent.term}" slug=${slug} ` +
-              `material=${intent.material ?? '—'} color=${intent.color ?? '—'} characteristic=${intent.characteristic ?? '—'}`,
-          );
-        }
-      } else if (intent.mode === 'idea') {
-        // LLM явно решила, что это идея/набор — даже если словарь по совпадению нашёл единичный тип
-        // (напр. «вентилятор» упомянут вскользь внутри более широкого брифа), не уходим в точечный
-        // поиск, идём в Ideator/Critic. occasion/purpose прокидываем дальше в agentBrief/allowedItems.
-        intentForcedIdea = true;
-        intentOccasion = intent.occasion;
-        intentPurpose = intent.purpose;
-        // Материал для ВСЕГО набора («полностью кожаный», «набор из дерева») — жёсткое требование,
-        // не пожелание. В exact_position материал был только у одного товара; здесь он должен
-        // ограничить пул кандидатов ДО Ideator/подбора, иначе LLM/подбор молча его проигнорируют.
-        intentMaterial = intent.material;
-        if (intent.occasion || intent.purpose || intent.material) {
-          this.logger.log(
-            `LLM brief-intent: idea occasion=${intent.occasion ?? '—'} purpose=${intent.purpose ?? '—'} ` +
-              `material=${intent.material ?? '—'}`,
-          );
-        }
-      }
-    }
-    // ТОЧЕЧНЫЙ ЗАПРОС + явный лимит количества: число трактуем как «сколько КОНЦЕПЦИЙ показать» (по
-    // одному товару в каждой), а не «сколько позиций в наборе». «вентилятор» + лимит 5 = 5 концепций-
-    // вентиляторов. Набор-с-якорем возникает только при SET_SIGNALS (там isSingle=false → идеатор).
-    const explicitConceptCount =
-      request.useProductCountLimit === true && (request.maxProductsPerSet ?? 0) >= 2
-        ? Math.min(12, Math.max(2, request.maxProductsPerSet!))
-        : null;
-    const conceptLimit = explicitConceptCount ?? this.targetConceptCount();
-    const singleDecision =
-      !intentForcedIdea && singleType ? isSingleProductBrief(request.userPrompt, [singleType]) : false;
-    if (singleType) {
-      this.logger.log(
-        `Single-product probe: detected=${singleType} isSingle=${singleDecision} ` +
-          `conceptLimit=${conceptLimit} explicitCount=${explicitConceptCount ?? '—'}`,
-      );
-    }
-    if (singleType && singleDecision) {
-      const spec0 = resolveNamedPositionSpecsForBrief(request.userPrompt)[singleType];
-      // Цвет из поля «Цвета» для точечного запроса = ЦВЕТ ТОВАРА (пользователь так задаёт «оранжевые
-      // полотенца»), поэтому мёржим в spec.colors как сильный сигнал (не только слабый бренд-бонус).
-      // intentColor — цвет из LLM-классификации намерения («белый повербанк») — тот же приоритет.
-      const spec = {
-        label: spec0?.label ?? singleType,
-        attributes: spec0?.attributes ?? [],
-        colors: [...new Set([...(spec0?.colors ?? []), ...colors, ...(intentColor ? [intentColor] : [])])],
-      };
-      // ТОЧЕЧНАЯ ДОЗАГРУЗКА ТИПА ИЗ БД: тематический ретривал/бюджет-срез могли не загрузить товар
-      // нужного типа ВООБЩЕ (для «полотенце» пул был пуст → раньше падало в обычный пайплайн с мусором).
-      // Грузим сам тип напрямую по имени, без гейтов — цену/остаток решает ранжирование ниже.
-      let directCatalog = filteredCatalog;
-      const inPool = detectedProduct
-        ? filteredCatalog.filter((p) => detectedProduct.nameRe.test(p.name || '')).length
-        : filteredCatalog.length;
-      if (detectedProduct?.term && inPool < this.targetConceptCount() * 2) {
-        try {
-          const loaded = await this.llmBrief.searchCatalogByText(detectedProduct.term, 300);
-          const seenIds = new Set(filteredCatalog.map((p) => p.id));
-          directCatalog = [...filteredCatalog, ...loaded.filter((p) => !seenIds.has(p.id))];
-          this.logger.log(
-            `Direct-catalog дозагрузка "${detectedProduct.term}": пул был ${inPool}, ` +
-              `+${directCatalog.length - filteredCatalog.length} SKU из БД`,
-          );
-        } catch (e) {
-          this.logger.warn(`Direct-catalog дозагрузка failed: ${(e as Error).message}`);
-        }
-      }
-      const matches = searchDirectCatalogProducts({
-        catalog: directCatalog,
-        namedType: singleType,
-        spec,
-        budgetPerSet,
-        brandColors: colors,
-        forbiddenItems,
-        tirage: filterInput.quantity ?? request.quantity ?? null,
-        limit: conceptLimit,
-        nameMatch: detectedProduct?.nameRe,
-        // Исключаем blacklist пользователя + товары прошлой генерации → регенерация точечного
-        // запроса отдаёт ДРУГИЕ SKU (раньше direct-search возвращал те же топ-N), blacklist уважается.
-        excludeIds: blacklistedProductIds.length ? new Set(blacklistedProductIds) : undefined,
-        brief: request.userPrompt,
-        materialHint: intentMaterial,
-        characteristicHint: intentCharacteristic,
-      });
-      this.logger.log(
-        `Direct-catalog search: type=${singleType} pool=${directCatalog.length} ` +
-          `nameInPool=${directCatalog.filter((p) => detectedProduct?.nameRe?.test(p.name || '')).length} ` +
-          `budgetPerSet=${budgetPerSet} tirage=${filterInput.quantity ?? request.quantity ?? null} matches=${matches.length}`,
-      );
-      if (matches.length >= 1) {
-        const directConcepts = matches.map((p, i) =>
-          this.mapProductsToConcept(
-            p.name,
-            undefined,
-            undefined,
-            [p],
-            false,
-            i,
-            undefined,
-            undefined,
-            colors,
-            undefined,
-            budgetPerSet,
-            filterInput.quantity ?? request.quantity ?? null,
-          ),
-        );
-        this.logger.log(
-          `Direct-catalog mode (точечный запрос "${namedResolved.namedItems.join(', ')}"): ` +
-            `${directConcepts.length} прямых совпадений, идеатор пропущен`,
-        );
-        return {
-          concepts: directConcepts,
-          ideatorOutput: undefined,
-          criticOutput: undefined,
-          pipeline: 'direct_catalog',
-          timingMs: timing.totalMs(),
-          timingStages: timing.toRecord(),
-        };
-      }
-    }
-
-    // PURPOSE (LLM-классификация намерения, режим idea) → категории каталога МЯГКИМ добавлением:
-    // если пользователь НЕ задал allowedItems явно в UI (request.allowedItems пуст), добавленные
-    // из purpose бакеты остаются soft (см. allowedBucketSoft ниже у neuralSelector) — склоняют подбор,
-    // но не режут жёстко другие категории. Если UI явно задал категории — это уже hard-ограничение,
-    // purpose туда не подмешиваем, чтобы не расширять то, что пользователь сознательно сузил.
-    const purposeBuckets =
-      intentPurpose && !((request.allowedItems as string[]) ?? []).length
-        ? (parseAllowedCategories(intentPurpose) ?? [])
-        : [];
-    const allowedItemsWithPurpose = purposeBuckets.length
-      ? [...new Set([...allowedItems, ...purposeBuckets])]
-      : allowedItems;
-    if (purposeBuckets.length) {
-      this.logger.log(`Purpose→buckets (soft): "${intentPurpose}" → [${purposeBuckets.join(', ')}]`);
-    }
 
     const agentBrief: AgentBriefContext = {
 
       ...briefInput,
 
-      // ОБОГАЩЁННЫЕ цвета (нормализованные + извлечённые из free-text брифа, «жёлтый повербанк»),
-      // а не сырые briefInput.colors (=request.colors) — иначе идеатор/критик видят другой набор
-      // цветов, чем остальной пайплайн (ретривал/скор/сборка используют локальный `colors`).
-      colors,
-
-      allowedItems: allowedItemsWithPurpose,
+      allowedItems,
 
       forbiddenItems,
-
-      // OCCASION (LLM-классификация намерения, режим idea) — повод/аудитория набора (VIP, Новый год,
-      // Раздаточные материалы для ивентов, …). НЕ категория товара — влияет на тон/стиль генерации
-      // Ideator (нарратив, цветовое настроение), не на фильтр каталога.
-      occasion: intentOccasion,
-
-      // REQUIRED MATERIAL (LLM-классификация намерения, режим idea) — «полностью кожаный набор».
-      // Жёсткий фильтр пула — в neuralSelector (requiredMaterial); здесь это доп. сигнал для
-      // Ideator, чтобы productSlots.notes сразу отражали материал (согласованность истории набора).
-      requiredMaterial: intentMaterial,
 
     };
 
@@ -998,10 +762,6 @@ export class CatalogConceptService {
     // Сколько наборов прогона уже содержали данное семейство — для мягкого
     // межконцептового анти-однообразия (плед/сумка/зонт не во всех 5 наборах).
     const familyUsage = new Map<string, number>();
-    // Крупные группы (coarseFamilyOf), по одному инкременту за концепцию — НЕ сумма мелких
-    // семейств (см. computeBlockedFamilies): 2 разных мелких семейства одной крупной группы
-    // в ОДНОМ наборе (наушники+колонка → 'tech') иначе давали двойной счёт.
-    const coarseFamilyUsage = new Map<string, number>();
 
     const targetConcepts = this.targetConceptCount();
 
@@ -1073,17 +833,8 @@ export class CatalogConceptService {
       if (types.length > 0) {
         diversityTracker.recordConceptTypes(types);
         // +1 за КАЖДОЕ уникальное семейство этого набора (счётчик «в скольких наборах было»).
-        const fineFamilies = new Set(types.map((t) => familyForType(t)));
-        for (const fam of fineFamilies) {
+        for (const fam of new Set(types.map((t) => familyForType(t)))) {
           familyUsage.set(fam, (familyUsage.get(fam) ?? 0) + 1);
-        }
-        // +1 за КАЖДУЮ уникальную КРУПНУЮ группу этого набора (не сумму мелких семейств —
-        // иначе набор с наушниками+колонкой считался бы за 2 'tech' вместо 1).
-        const coarseHere = new Set(
-          [...fineFamilies].filter((f) => !CATCHALL_FAMILIES.has(f)).map((f) => coarseFamilyOf(f)),
-        );
-        for (const c of coarseHere) {
-          coarseFamilyUsage.set(c, (coarseFamilyUsage.get(c) ?? 0) + 1);
         }
       }
     };
@@ -1114,23 +865,6 @@ export class CatalogConceptService {
           2,
           Math.max(0, Math.round(raw.boldness ?? 1)),
         ) as ConceptBoldness;
-        // #1 РАЗМЕР НАБОРА: не всегда max (=5 при «3–5»). Человек-байер при скромном бюджете берёт
-        // МЕНЬШЕ, но качественнее позиций, а не 5 дешёвых. Target = варьируемое по концепциям число
-        // в [min,max] (pickConceptItemCount) с капом «бюджет / целевая цена подарочной позиции».
-        // minItems остаётся полом, исходный maxItems — абсолютным потолком. Флаг отката.
-        const budgetAwareCount =
-          this.config.get<string>('CATALOG_BUDGET_AWARE_COUNT', 'true') !== 'false';
-        let targetMax = maxItems;
-        if (budgetAwareCount && maxItems > minItems) {
-          const mandCount = new Set([...mandatoryConceptTypes, ...namedResolved.namedTypes]).size;
-          const varied = pickConceptItemCount({ min: minItems, max: maxItems, useLimit: true }, index);
-          const QUALITY_ITEM_VALUE = 650; // ~«подарочная» цена за предмет
-          const qualityCap =
-            budgetPerSet && budgetPerSet > 0
-              ? Math.max(minItems, Math.floor(budgetPerSet / QUALITY_ITEM_VALUE))
-              : maxItems;
-          targetMax = Math.max(minItems, mandCount, Math.min(varied, qualityCap, maxItems));
-        }
         let excludedProductIds: Set<string> | undefined;
         if (semanticDedup && index > 0 && semUsedIds.length) {
           excludedProductIds = await this.embeddingService
@@ -1150,22 +884,12 @@ export class CatalogConceptService {
             fullCatalog: broadCatalog.length ? broadCatalog : relevanceCatalog.length ? relevanceCatalog : catalogForLlm,
             ledger: sharedLedger,
             minItems,
-            maxItems: targetMax,
+            maxItems,
             budgetPerSet,
             brief: request.userPrompt,
             brandColors: colors,
             excludedItems: forbiddenItems,
-            // allowedItemsWithPurpose = allowedItems + мягкие бакеты из purpose (LLM-классификация
-            // намерения, режим idea, напр. "спортивные товары"). Добавляются ТОЛЬКО когда UI не
-            // задавал allowedItems явно — поэтому ниже allowedBucketSoft остаётся true в этом случае.
-            allowedItems: allowedItemsWithPurpose,
-            // Смягчать not_in_allowed_bucket можно ТОЛЬКО когда whitelist пришёл из свободного текста
-            // брифа (illustrative «плед, чай») или из purpose. Если категория задана ЯВНО в UI
-            // (request.allowedItems, напр. «Посуда») — это жёсткое ограничение: не возвращаем зонты
-            // в «только Посуда».
-            allowedBucketSoft: (((request.allowedItems as string[]) ?? []).length === 0),
             familyUsage,
-            coarseFamilyUsage,
             // Названные пользователем позиции («повербанк»…) + обязательные типы брифа —
             // гарантируем их в пуле кандидатов и в собранном наборе (точный подбор).
             mandatoryTypes: [
@@ -1174,7 +898,6 @@ export class CatalogConceptService {
             tirage: filterInput.quantity ?? request.quantity ?? null,
             conceptIndex: index,
             excludedProductIds,
-            requiredMaterial: intentMaterial,
             trace: options?.trace,
           });
           semUsedIds.push(...products.map((p) => p.id));
@@ -1439,18 +1162,10 @@ export class CatalogConceptService {
     }
 
     if (previousProductIds.size > 0) {
-      // КОРЕНЬ утечки regen: раньше replace/refill брали сырой пул и фильтровали лишь по типу/
-      // филлеру, из-за чего замена/добор могли внести forbidden-товар, цвето-конфликт или дешёвку
-      // мимо гейтов основного пути. Пул для regen предфильтруем авторитетным качественным гейтом
-      // (forbidden + forbidden/конфликт цвета + сток + minUnit) — тем же, что и на основном пути.
-      const regenQgInput = selectionConstraintsFromFilterInput(filterInput, countBounds);
-      const regenPool = (relevanceCatalog.length ? relevanceCatalog : catalogForLlm).filter((p) =>
-        productPassesQualityGate(p, regenQgInput),
-      );
       finalConcepts = replacePreviousGenerationProducts(
         finalConcepts,
         previousProductIds,
-        regenPool,
+        relevanceCatalog.length ? relevanceCatalog : catalogForLlm,
         request.userPrompt,
         colors,
         regenerationSeed,
@@ -1458,7 +1173,7 @@ export class CatalogConceptService {
       finalConcepts = refillConceptsAvoidingPrevious(
         finalConcepts,
         previousProductIds,
-        regenPool,
+        relevanceCatalog.length ? relevanceCatalog : catalogForLlm,
         desiredCount,
         request.userPrompt,
         colors,
@@ -1466,23 +1181,6 @@ export class CatalogConceptService {
       );
       this.logger.log(
         `Regeneration novelty: blocked ${previousProductIds.size} previous SKUs, run #${generationHistory?.generationCount ?? 0}`,
-      );
-      // ИНВАРИАНТ «возвращаемый набор — проверенный»: replace/refill выше — ПОСЛЕДНИЕ мутации набора,
-      // а они гейтуют только ПО-ТОВАРНО (productPassesQualityGate на пуле). Набор-УРОВНЕВЫЕ
-      // обещания (сумма ≤ бюджета, обязательные типы на месте, размер в [min,max], нет структурных
-      // дублей) после них никто не сверял — enforceSetHardConstraints живёт только внутри
-      // нейро-селектора, ДО regen. Прогоняем единый бэкстоп ещё раз, замыкая инвариант.
-      // mandatoryTypes — ТОТ ЖЕ широкий набор, что защищал позиции в нейро-селекторе (бриф-типы +
-      // названные позиции). Иначе бэкстоп счёл бы названную позицию обычной и снял её под бюджет.
-      const regenEnforceInput = {
-        ...regenQgInput,
-        mandatoryTypes: [...new Set([...mandatoryConceptTypes, ...namedResolved.namedTypes])],
-      };
-      finalConcepts = this.reEnforceConceptsAfterRegen(
-        finalConcepts,
-        regenEnforceInput,
-        regenPool,
-        new Map([...broadCatalog, ...relevanceCatalog, ...regenPool].map((p) => [p.id, p])),
       );
     }
 
@@ -3249,7 +2947,7 @@ export class CatalogConceptService {
       return {
         id: p.id,
         name: p.name,
-        category: cleanDisplayCategory(p.name, p.category),
+        category: p.category,
         productType: detectProductRole(p).legacyType,
         price: p.price,
         stockAvailable: p.stockAvailable,
@@ -3330,79 +3028,6 @@ export class CatalogConceptService {
 
     };
 
-  }
-
-  /**
-   * Повторный прогон единого бэкстопа после regen-мутаций (replace/refill). Те гейтуют ПО-ТОВАРНО,
-   * поэтому набор-уровневые обещания (бюджет-сумма, обязательные типы, размер, структурные дубли)
-   * после них не проверены. Кросс-концептовый дедуп сохраняем лёгким реестром: добор бэкстопа не
-   * должен втащить SKU, уже занятый другим набором. Никогда не бросает — при сбое отдаём вход.
-   */
-  private reEnforceConceptsAfterRegen(
-    concepts: Concept[],
-    scInput: SelectionConstraintsInput,
-    pool: CatalogProduct[],
-    byId: Map<string, CatalogProduct>,
-  ): Concept[] {
-    if (process.env.CATALOG_FINAL_ENFORCE === 'false') return concepts;
-    const usedIds = new Set<string>();
-    for (const c of concepts) for (const p of c.catalogProducts ?? []) usedIds.add(p.id);
-    // Реестр только по id: снятый бэкстопом товар освобождается, добранный — занимается.
-    const ledger = {
-      canUse: (p: CatalogProduct) => !usedIds.has(p.id),
-      reserve: (p: CatalogProduct) => void usedIds.add(p.id),
-      release: (p: CatalogProduct) => void usedIds.delete(p.id),
-    };
-    return concepts.map((concept) => {
-      try {
-        const cps = concept.catalogProducts ?? [];
-        if (!cps.length) return concept;
-        // Полные строки каталога: regex-гейты читают description/subcategory, которых нет в
-        // облегчённой форме concept.catalogProducts. Нет строки → минимальный товар из позиции.
-        const products: CatalogProduct[] = cps.map(
-          (cp) => byId.get(cp.id) ?? ({ ...cp, description: '', subcategory: null } as unknown as CatalogProduct),
-        );
-        const beforeIds = products.map((p) => p.id).join(',');
-        // Позиции набора уже «заняты» в usedIds — иначе бэкстоп счёл бы их недоступными при доборе.
-        for (const p of products) usedIds.delete(p.id);
-        const enforced = enforceSetHardConstraints(products, scInput, pool, {
-          ledger,
-          log: (m) => this.logger.log(`[regen re-enforce] ${m}`),
-        });
-        for (const p of enforced.set) usedIds.add(p.id);
-        if (enforced.set.map((p) => p.id).join(',') === beforeIds) return concept;
-        return this.conceptWithCatalogProducts(concept, enforced.set);
-      } catch (e) {
-        this.logger.warn(`regen re-enforce failed: ${(e as Error).message}`);
-        return concept;
-      }
-    });
-  }
-
-  /** Переписывает catalogProducts/productIds/превью концепции из полных строк каталога. */
-  private conceptWithCatalogProducts(concept: Concept, products: CatalogProduct[]): Concept {
-    const prevById = new Map((concept.catalogProducts ?? []).map((p) => [p.id, p]));
-    const catalogProducts = products.map((p) => {
-      const prev = prevById.get(p.id);
-      return {
-        id: p.id,
-        name: p.name,
-        category: p.category,
-        productType: prev?.productType ?? detectConceptProductType(p),
-        price: p.price,
-        stockAvailable: p.stockAvailable,
-        colors: prev?.colors ?? [],
-        catalogImageUrl: prev?.catalogImageUrl ?? p.catalogImageUrl ?? undefined,
-        hasCatalogImage: prev?.hasCatalogImage ?? Boolean(p.catalogImageUrl?.trim()),
-        sourceUrl: prev?.sourceUrl ?? null,
-      };
-    });
-    return {
-      ...concept,
-      catalogProducts,
-      productIds: catalogProducts.map((p) => p.id),
-      previewProductImageUrls: catalogProducts.map((p) => p.catalogImageUrl).filter(Boolean) as string[],
-    };
   }
 
 }

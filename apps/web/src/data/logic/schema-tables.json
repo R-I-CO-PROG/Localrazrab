@@ -1,0 +1,786 @@
+{
+  "generatedAt": "2026-06-22T21:44:16.154Z",
+  "source": "apps/web/prisma/schema.prisma",
+  "tables": [
+    {
+      "model": "User",
+      "table": "user",
+      "group": "Auth",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "key": "PK",
+          "attributes": "@id"
+        },
+        {
+          "name": "name",
+          "type": "String",
+          "attributes": "@default(\"\")"
+        },
+        {
+          "name": "email",
+          "type": "String",
+          "key": "UK",
+          "attributes": "@unique"
+        },
+        {
+          "name": "emailVerified",
+          "type": "Boolean",
+          "attributes": "@default(false)"
+        },
+        {
+          "name": "image",
+          "type": "String?"
+        },
+        {
+          "name": "role",
+          "type": "UserRole",
+          "attributes": "@default(USER)",
+          "note": "USER | MANAGER | ADMIN"
+        },
+        {
+          "name": "blocked",
+          "type": "Boolean",
+          "attributes": "@default(false)"
+        },
+        {
+          "name": "blockedAt",
+          "type": "DateTime?"
+        },
+        {
+          "name": "credits",
+          "type": "Int",
+          "attributes": "@default(50)"
+        },
+        {
+          "name": "plan",
+          "type": "PlanType",
+          "attributes": "@default(STARTER)",
+          "note": "STARTER | BUSINESS | ENTERPRISE"
+        },
+        {
+          "name": "stripeCustomerId",
+          "type": "String?"
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "attributes": "@default(now())"
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "attributes": "@updatedAt"
+        },
+        {
+          "name": "sessions",
+          "type": "Session[]",
+          "note": "1:N → Session"
+        },
+        {
+          "name": "accounts",
+          "type": "Account[]",
+          "note": "1:N → Account"
+        },
+        {
+          "name": "creditLogs",
+          "type": "CreditLog[]",
+          "note": "1:N → CreditLog"
+        }
+      ]
+    },
+    {
+      "model": "Session",
+      "table": "session",
+      "group": "Auth",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "key": "PK",
+          "attributes": "@id"
+        },
+        {
+          "name": "expiresAt",
+          "type": "DateTime"
+        },
+        {
+          "name": "token",
+          "type": "String",
+          "key": "UK",
+          "attributes": "@unique"
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "attributes": "@default(now())"
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "attributes": "@updatedAt"
+        },
+        {
+          "name": "ipAddress",
+          "type": "String?"
+        },
+        {
+          "name": "userAgent",
+          "type": "String?"
+        },
+        {
+          "name": "userId",
+          "type": "String"
+        },
+        {
+          "name": "user",
+          "type": "User",
+          "key": "FK",
+          "attributes": "@relation(fields: [userId], references: [id], onDelete: Cascade)",
+          "note": "FK → userId"
+        }
+      ]
+    },
+    {
+      "model": "Account",
+      "table": "account",
+      "group": "Auth",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "key": "PK",
+          "attributes": "@id"
+        },
+        {
+          "name": "accountId",
+          "type": "String"
+        },
+        {
+          "name": "providerId",
+          "type": "String"
+        },
+        {
+          "name": "userId",
+          "type": "String"
+        },
+        {
+          "name": "user",
+          "type": "User",
+          "key": "FK",
+          "attributes": "@relation(fields: [userId], references: [id], onDelete: Cascade)",
+          "note": "FK → userId"
+        },
+        {
+          "name": "accessToken",
+          "type": "String?"
+        },
+        {
+          "name": "refreshToken",
+          "type": "String?"
+        },
+        {
+          "name": "idToken",
+          "type": "String?"
+        },
+        {
+          "name": "accessTokenExpiresAt",
+          "type": "DateTime?"
+        },
+        {
+          "name": "refreshTokenExpiresAt",
+          "type": "DateTime?"
+        },
+        {
+          "name": "scope",
+          "type": "String?"
+        },
+        {
+          "name": "password",
+          "type": "String?"
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "attributes": "@default(now())"
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "attributes": "@updatedAt"
+        }
+      ]
+    },
+    {
+      "model": "Verification",
+      "table": "verification",
+      "group": "Auth",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "key": "PK",
+          "attributes": "@id"
+        },
+        {
+          "name": "identifier",
+          "type": "String"
+        },
+        {
+          "name": "value",
+          "type": "String"
+        },
+        {
+          "name": "expiresAt",
+          "type": "DateTime"
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "attributes": "@default(now())"
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "attributes": "@updatedAt"
+        }
+      ]
+    },
+    {
+      "model": "CreditLog",
+      "table": "CreditLog",
+      "group": "Auth",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "key": "PK",
+          "attributes": "@id @default(cuid())"
+        },
+        {
+          "name": "userId",
+          "type": "String"
+        },
+        {
+          "name": "action",
+          "type": "CreditAction",
+          "note": "CONCEPT_GENERATION | VISUALIZATION | PDF_EXPORT | PPTX_EXPORT | DOCX_EXPORT | ADMIN_GRANT"
+        },
+        {
+          "name": "amount",
+          "type": "Int"
+        },
+        {
+          "name": "balance",
+          "type": "Int"
+        },
+        {
+          "name": "metadata",
+          "type": "Json?"
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "attributes": "@default(now())"
+        },
+        {
+          "name": "user",
+          "type": "User",
+          "key": "FK",
+          "attributes": "@relation(fields: [userId], references: [id], onDelete: Cascade)",
+          "note": "FK → userId"
+        }
+      ]
+    },
+    {
+      "model": "Product",
+      "table": "Product",
+      "group": "Catalog",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "key": "PK",
+          "attributes": "@id @default(cuid())"
+        },
+        {
+          "name": "slug",
+          "type": "String",
+          "key": "UK",
+          "attributes": "@unique"
+        },
+        {
+          "name": "name",
+          "type": "String"
+        },
+        {
+          "name": "category",
+          "type": "String"
+        },
+        {
+          "name": "subcategory",
+          "type": "String?"
+        },
+        {
+          "name": "description",
+          "type": "String?"
+        },
+        {
+          "name": "sourceId",
+          "type": "String?"
+        },
+        {
+          "name": "externalId",
+          "type": "String?"
+        },
+        {
+          "name": "price",
+          "type": "Float?"
+        },
+        {
+          "name": "currency",
+          "type": "String",
+          "attributes": "@default(\"RUB\")"
+        },
+        {
+          "name": "stockAvailable",
+          "type": "Int",
+          "attributes": "@default(0)"
+        },
+        {
+          "name": "colors",
+          "type": "Json",
+          "attributes": "@default(\"[]\")"
+        },
+        {
+          "name": "sourceUrl",
+          "type": "String?"
+        },
+        {
+          "name": "silhouetteImageUrl",
+          "type": "String"
+        },
+        {
+          "name": "catalogImageUrl",
+          "type": "String?"
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "attributes": "@default(now())"
+        },
+        {
+          "name": "requestItems",
+          "type": "RequestItem[]",
+          "note": "1:N → RequestItem"
+        }
+      ]
+    },
+    {
+      "model": "Request",
+      "table": "Request",
+      "group": "Generation",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "key": "PK",
+          "attributes": "@id @default(cuid())"
+        },
+        {
+          "name": "title",
+          "type": "String",
+          "attributes": "@default(\"Новая концепция\")"
+        },
+        {
+          "name": "userPrompt",
+          "type": "String",
+          "attributes": "@default(\"\")"
+        },
+        {
+          "name": "category",
+          "type": "String",
+          "attributes": "@default(\"Welcome Pack\")"
+        },
+        {
+          "name": "budgetMin",
+          "type": "Int?"
+        },
+        {
+          "name": "budgetMax",
+          "type": "Int?"
+        },
+        {
+          "name": "quantity",
+          "type": "Int?"
+        },
+        {
+          "name": "setItemCount",
+          "type": "Int?"
+        },
+        {
+          "name": "colors",
+          "type": "Json",
+          "attributes": "@default(\"[]\")"
+        },
+        {
+          "name": "allowedItems",
+          "type": "Json",
+          "attributes": "@default(\"[]\")"
+        },
+        {
+          "name": "forbiddenItems",
+          "type": "Json",
+          "attributes": "@default(\"[]\")"
+        },
+        {
+          "name": "notes",
+          "type": "String?"
+        },
+        {
+          "name": "status",
+          "type": "RequestStatus",
+          "attributes": "@default(draft)",
+          "note": "draft | ready | generating | done | failed"
+        },
+        {
+          "name": "generationCount",
+          "type": "Int",
+          "attributes": "@default(0)"
+        },
+        {
+          "name": "generationLockedAt",
+          "type": "DateTime?"
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "attributes": "@default(now())"
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "attributes": "@updatedAt"
+        },
+        {
+          "name": "items",
+          "type": "RequestItem[]",
+          "note": "1:N → RequestItem"
+        },
+        {
+          "name": "assets",
+          "type": "Asset[]",
+          "note": "1:N → Asset"
+        },
+        {
+          "name": "generation",
+          "type": "Generation?",
+          "note": "→ Generation"
+        },
+        {
+          "name": "agentRun",
+          "type": "AgentRun?",
+          "note": "→ AgentRun"
+        }
+      ]
+    },
+    {
+      "model": "AgentRun",
+      "table": "AgentRun",
+      "group": "Generation",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "key": "PK",
+          "attributes": "@id @default(cuid())"
+        },
+        {
+          "name": "requestId",
+          "type": "String",
+          "key": "UK",
+          "attributes": "@unique"
+        },
+        {
+          "name": "status",
+          "type": "AgentRunStatus",
+          "attributes": "@default(queued)",
+          "note": "queued | running | awaiting_product_selection | awaiting_idea_selection | idea_selected | done | failed"
+        },
+        {
+          "name": "route",
+          "type": "AgentRoute?",
+          "note": "DIRECT_PRODUCT | IDEATION_PIPELINE"
+        },
+        {
+          "name": "currentStep",
+          "type": "String?"
+        },
+        {
+          "name": "routerOutput",
+          "type": "Json?"
+        },
+        {
+          "name": "ideatorOutput",
+          "type": "Json?"
+        },
+        {
+          "name": "criticOutput",
+          "type": "Json?"
+        },
+        {
+          "name": "promptOutput",
+          "type": "Json?"
+        },
+        {
+          "name": "directProducts",
+          "type": "Json?"
+        },
+        {
+          "name": "conceptsOutput",
+          "type": "Json?"
+        },
+        {
+          "name": "chosenIdeaTitle",
+          "type": "String?"
+        },
+        {
+          "name": "imageResultUrl",
+          "type": "String?"
+        },
+        {
+          "name": "error",
+          "type": "String?"
+        },
+        {
+          "name": "debugEnabled",
+          "type": "Boolean",
+          "attributes": "@default(false)"
+        },
+        {
+          "name": "debugLog",
+          "type": "Json?"
+        },
+        {
+          "name": "startedAt",
+          "type": "DateTime?"
+        },
+        {
+          "name": "finishedAt",
+          "type": "DateTime?"
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "attributes": "@default(now())"
+        },
+        {
+          "name": "updatedAt",
+          "type": "DateTime",
+          "attributes": "@updatedAt"
+        },
+        {
+          "name": "request",
+          "type": "Request",
+          "key": "FK",
+          "attributes": "@relation(fields: [requestId], references: [id], onDelete: Cascade)",
+          "note": "FK → requestId"
+        }
+      ]
+    },
+    {
+      "model": "RequestItem",
+      "table": "RequestItem",
+      "group": "Generation",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "key": "PK",
+          "attributes": "@id @default(cuid())"
+        },
+        {
+          "name": "requestId",
+          "type": "String"
+        },
+        {
+          "name": "productId",
+          "type": "String"
+        },
+        {
+          "name": "request",
+          "type": "Request",
+          "key": "FK",
+          "attributes": "@relation(fields: [requestId], references: [id], onDelete: Cascade)",
+          "note": "FK → requestId"
+        },
+        {
+          "name": "product",
+          "type": "Product",
+          "key": "FK",
+          "attributes": "@relation(fields: [productId], references: [id])",
+          "note": "FK → productId"
+        }
+      ]
+    },
+    {
+      "model": "Asset",
+      "table": "Asset",
+      "group": "Generation",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "key": "PK",
+          "attributes": "@id @default(cuid())"
+        },
+        {
+          "name": "requestId",
+          "type": "String"
+        },
+        {
+          "name": "type",
+          "type": "AssetType",
+          "note": "logo | reference"
+        },
+        {
+          "name": "url",
+          "type": "String"
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "attributes": "@default(now())"
+        },
+        {
+          "name": "request",
+          "type": "Request",
+          "key": "FK",
+          "attributes": "@relation(fields: [requestId], references: [id], onDelete: Cascade)",
+          "note": "FK → requestId"
+        }
+      ]
+    },
+    {
+      "model": "Generation",
+      "table": "Generation",
+      "group": "Generation",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "key": "PK",
+          "attributes": "@id @default(cuid())"
+        },
+        {
+          "name": "requestId",
+          "type": "String",
+          "key": "UK",
+          "attributes": "@unique"
+        },
+        {
+          "name": "status",
+          "type": "GenerationStatus",
+          "attributes": "@default(queued)",
+          "note": "queued | generating | done | failed"
+        },
+        {
+          "name": "inputSnapshot",
+          "type": "Json"
+        },
+        {
+          "name": "llmOutput",
+          "type": "Json?"
+        },
+        {
+          "name": "imagePrompt",
+          "type": "String?"
+        },
+        {
+          "name": "negativePrompt",
+          "type": "String?"
+        },
+        {
+          "name": "resultImageUrl",
+          "type": "String?"
+        },
+        {
+          "name": "conceptResults",
+          "type": "Json?"
+        },
+        {
+          "name": "startedAt",
+          "type": "DateTime?"
+        },
+        {
+          "name": "finishedAt",
+          "type": "DateTime?"
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "attributes": "@default(now())"
+        },
+        {
+          "name": "request",
+          "type": "Request",
+          "key": "FK",
+          "attributes": "@relation(fields: [requestId], references: [id], onDelete: Cascade)",
+          "note": "FK → requestId"
+        },
+        {
+          "name": "variants",
+          "type": "VisualizationVariant[]",
+          "note": "1:N → VisualizationVariant"
+        }
+      ]
+    },
+    {
+      "model": "VisualizationVariant",
+      "table": "VisualizationVariant",
+      "group": "Generation",
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "key": "PK",
+          "attributes": "@id @default(cuid())"
+        },
+        {
+          "name": "generationId",
+          "type": "String"
+        },
+        {
+          "name": "imageUrl",
+          "type": "String"
+        },
+        {
+          "name": "refinementBrief",
+          "type": "String?"
+        },
+        {
+          "name": "imagePrompt",
+          "type": "String?"
+        },
+        {
+          "name": "sortOrder",
+          "type": "Int",
+          "attributes": "@default(0)"
+        },
+        {
+          "name": "createdAt",
+          "type": "DateTime",
+          "attributes": "@default(now())"
+        },
+        {
+          "name": "generation",
+          "type": "Generation",
+          "key": "FK",
+          "attributes": "@relation(fields: [generationId], references: [id], onDelete: Cascade)",
+          "note": "FK → generationId"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,335 @@
+{
+  "meta": {
+    "title": "Мерцай — Logic",
+    "version": "2026-06-28",
+    "ports": {
+      "web": 3000,
+      "api": 3001,
+      "postgres": 5432,
+      "redis": 6379
+    }
+  },
+  "overview": {
+    "description": "SaaS для генерации корпоративных welcome-pack / мерч-концепций: бриф → 5 концепций → AI-фото сцены → refine/перегенерация с каруселью версий. Каталог IMBA 51 320 SKU / 98 категорий в PostgreSQL (mertsai:5432). Подбор товаров — нейро-селектор (LLM-байер).",
+    "modes": [
+      {
+        "id": "creative",
+        "label": "Creative",
+        "description": "Ideator (до 22 идей) → Critic (топ-5) → [опционально] Flux Klein превью → финальное фото: PromptBuilder + OpenRouter Image (Gemini)"
+      },
+      {
+        "id": "catalog",
+        "label": "Catalog (нейро-подбор)",
+        "description": "SQL-префильтр + стратифицированный shortlist (≤200) → CatalogIdeator (gpt-4o-mini:floor) → нейро-байер CatalogBuyer подбирает SKU по контракту/слотам (gpt-4o-mini:floor) → LLM-критик набора (gemini-2.5-flash-lite) → 5 концепций (parallel) → финальное фото с refs каталога. CATALOG_NEURAL_SELECTOR=true."
+      }
+    ],
+    "stack": [
+      { "layer": "Frontend", "tech": "Next.js 15 App Router, Zustand persist, Tailwind" },
+      { "layer": "BFF", "tech": "/api/backend/* proxy + /api/concepts/generate, /api/brief/parse, /api/presentations/*" },
+      { "layer": "API", "tech": "NestJS :3001, Prisma, BullMQ" },
+      { "layer": "Data", "tech": "PostgreSQL :5432 mertsai (Catalog IMBA 51 320 SKU / 98 категорий), Redis, uploads/" },
+      { "layer": "AI", "tech": "OpenRouter (LLM + Image). HF FLUX / Pollinations / Horde — только fallback при сбое OpenRouter" }
+    ]
+  },
+  "userJourneys": [
+    {
+      "id": "discovery",
+      "title": "1. Discovery — генерация концепций",
+      "steps": [
+        { "n": 1, "who": "User", "action": "Заполняет бриф на /generate", "where": "apps/web/.../generate/page.tsx" },
+        { "n": 2, "who": "User", "action": "«Подобрать параметры из брифа» (опционально)", "api": "POST /api/brief/parse → POST /requests/parse-brief" },
+        { "n": 3, "who": "User", "action": "«Сгенерировать концепции»", "api": "POST /api/concepts/generate" },
+        { "n": 4, "who": "BFF", "action": "prepareSuvenirRequest: POST/PATCH /requests, logo upload, submit", "file": "suvenir-server.ts" },
+        { "n": 5, "who": "Web", "action": "POST /requests/{id}/agent-run { aiStyle }", "file": "suvenir-client.ts → startAgentRun" },
+        { "n": 6, "who": "API", "action": "AgentRunService → BullMQ queue agent-run job concepts", "file": "agent-run.service.ts" },
+        { "n": 7, "who": "Worker", "action": "AgentRunProcessor: catalog (Ideator→fast pick) OR creative (Ideator→Critic)", "file": "agent-run.processor.ts" },
+        { "n": 8, "who": "Worker", "action": "[creative only, опционально] ConceptPreviewService Flux Klein ×5", "model": "OPENROUTER_IMAGE_MODEL_PREVIEW + CREATIVE_FLUX_PREVIEW_ENABLED" },
+        { "n": 9, "who": "Web", "action": "Poll GET /requests/{id}/agent-run каждые 1.5s до awaiting_idea_selection", "file": "poll-agent-run.ts" },
+        { "n": 10, "who": "Web", "action": "setConcepts → navigate /concepts/results", "storage": "Zustand localStorage" }
+      ]
+    },
+    {
+      "id": "visualization",
+      "title": "2. Visualization — финальное AI-фото",
+      "steps": [
+        { "n": 1, "who": "User", "action": "Открывает концепцию /concepts/detail/[id]", "where": "detail/[id]/page.tsx" },
+        { "n": 2, "who": "User", "action": "«Создать визуализацию» / «Перегенерировать AI-фото»", "handler": "handleCreateVisualization()" },
+        { "n": 3, "who": "Web", "action": "POST /requests/{id}/agent-run/select { chosenIdeaTitle }", "api": "selectConcept()" },
+        { "n": 4, "who": "Web", "action": "POST /requests/{id}/generate OR /regenerate", "body": "{ mode: ai, aiStyle, chosenIdeaTitle, productIds, productTargetColors }" },
+        { "n": 5, "who": "API", "action": "GenerationService → BullMQ generation job", "file": "generation.service.ts" },
+        { "n": 6, "who": "Worker", "action": "GenerationProcessor: LLM brief → build prompts → OpenRouter Image (primary)", "file": "generation.processor.ts" },
+        { "n": 7, "who": "Worker", "action": "OpenRouter final: Gemini catalog/final + product/logo refs", "model": "OPENROUTER_IMAGE_MODEL_CATALOG / FINAL" },
+        { "n": 8, "who": "Worker", "action": "mergeConceptResult → conceptResults[chosenIdeaTitle].variants[]", "file": "concept-result.util.ts" },
+        { "n": 9, "who": "Web", "action": "Poll GET /requests/{id} до status=done", "interval": "1.5s" },
+        { "n": 10, "who": "Web", "action": "persistVisualization → carousel variants", "file": "map-visualization-variants.ts" }
+      ]
+    },
+    {
+      "id": "refine",
+      "title": "3. Refine — точечная перегенерация",
+      "steps": [
+        { "n": 1, "who": "User", "action": "Вводит бриф в ConceptRefinePanel → «Перегенерировать»", "handler": "handleRefine()" },
+        { "n": 2, "who": "Web", "action": "POST /requests/{id}/refine-visualization", "body": "{ refinementBrief, sourceImageUrl, chosenIdeaTitle }" },
+        { "n": 3, "who": "API", "action": "RefineVisualizationService → BullMQ jobType=refine", "file": "refine-visualization.service.ts" },
+        { "n": 4, "who": "Worker", "action": "processRefineVisualizationJob: scene ref + logo ref", "file": "refine-visualization.processor.ts" },
+        { "n": 5, "who": "Worker", "action": "buildRefinementImagePrompt + OpenrouterImageProvider.generateRefinement", "model": "OPENROUTER_REFINE_MODEL || FINAL" },
+        { "n": 6, "who": "Worker", "action": "Append variant to conceptResults (не затирает старые)", "file": "concept-result.util.ts" },
+        { "n": 7, "who": "Web", "action": "Poll + generationPollComplete() → carousel", "file": "resolve-concept-generation.ts" }
+      ]
+    },
+    {
+      "id": "presentation",
+      "title": "4. AI-презентация (PPTX)",
+      "steps": [
+        { "n": 1, "who": "User", "action": "Мастер на /presentations/ai или из /proposals", "where": "ai-presentation-wizard.tsx" },
+        { "n": 2, "who": "Web", "action": "POST /api/presentations/ai/generate", "file": "presentation-ai/pipeline.service.ts" },
+        { "n": 3, "who": "Web", "action": "LLM: brand-analysis → concept → copywriting → slide-refine", "model": "OPENROUTER_MODEL_PRESENTATION" },
+        { "n": 4, "who": "Web", "action": "Слайды: фото из каталога (не AI image gen)", "file": "image-generation.service.ts" },
+        { "n": 5, "who": "Web", "action": "Экспорт PPTX с нативным текстом", "file": "pptx-ai-native.ts" }
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "route": "/",
+      "file": "apps/web/src/app/(dashboard)/page.tsx",
+      "title": "Dashboard",
+      "actions": [
+        { "label": "Новая генерация", "type": "nav", "target": "/generate" },
+        { "label": "Открыть проект", "type": "local", "fn": "openProject → /concepts/results" }
+      ]
+    },
+    {
+      "route": "/generate",
+      "file": "apps/web/src/app/(dashboard)/generate/page.tsx",
+      "title": "Генерация концепций",
+      "actions": [
+        { "label": "Подобрать параметры из брифа", "method": "POST", "path": "/api/brief/parse", "upstream": "POST /requests/parse-brief", "handler": "generation-form.tsx → handleParseBrief" },
+        { "label": "Сгенерировать концепции / Подобрать 5 наборов", "method": "POST", "path": "/api/concepts/generate", "then": "POST /requests/{id}/agent-run + poll agent-run", "handler": "handleGenerate()" }
+      ]
+    },
+    {
+      "route": "/concepts/results",
+      "file": "apps/web/src/app/(dashboard)/concepts/results/page.tsx",
+      "title": "Результаты концепций",
+      "actions": [
+        { "label": "Клик по карточке концепции", "type": "nav", "target": "/concepts/detail/{id}" },
+        { "label": "Перегенерировать (назад)", "type": "nav", "target": "/generate" }
+      ]
+    },
+    {
+      "route": "/concepts/detail/[id]",
+      "file": "apps/web/src/app/(dashboard)/concepts/detail/[id]/page.tsx",
+      "title": "Деталь концепции + визуализация",
+      "actions": [
+        { "label": "Создать визуализацию / Перегенерировать AI-фото", "method": "POST", "path": "/requests/{id}/agent-run/select → /generate|/regenerate", "handler": "handleCreateVisualization()" },
+        { "label": "Перегенерировать (refine panel)", "method": "POST", "path": "/requests/{id}/refine-visualization", "handler": "handleRefine()" },
+        { "label": "Подобрать 5 вариантов (catalog)", "method": "POST", "path": "/requests/{id}/suggest-product-add", "handler": "catalog-product-set-editor.tsx" },
+        { "label": "Карусель вариантов", "type": "local", "fn": "handleVariantIndexChange" },
+        { "label": "Mount sync", "method": "GET", "path": "/requests/{id}", "fn": "getRequest()" }
+      ]
+    },
+    {
+      "route": "/presentations/ai",
+      "file": "apps/web/src/app/(dashboard)/presentations/ai/page.tsx",
+      "title": "AI-презентации",
+      "actions": [
+        { "label": "Сгенерировать презентацию", "method": "POST", "path": "/api/presentations/ai/generate", "handler": "ai-presentation-wizard.tsx" },
+        { "label": "Перегенерировать слайд", "method": "POST", "path": "/api/presentations/ai/{id}/regenerate-slide" },
+        { "label": "Экспорт PPTX", "method": "POST", "path": "/api/presentations/ai/{id}/export" }
+      ]
+    },
+    {
+      "route": "/proposals",
+      "file": "apps/web/src/app/(dashboard)/proposals/page.tsx",
+      "title": "Коммерческие предложения",
+      "actions": [
+        { "label": "Создать AI-презентацию из визуализаций", "method": "POST", "path": "/api/presentations/generate", "handler": "presentation-create-dialog.tsx" }
+      ]
+    },
+    {
+      "route": "/brandbooks",
+      "file": "apps/web/src/app/(dashboard)/brandbooks/page.tsx",
+      "title": "Брендбук и лого",
+      "actions": [
+        { "label": "Загрузить лого / брендбук", "method": "POST", "path": "/api/brand-assets", "note": "синхронизация с API" }
+      ]
+    },
+    {
+      "route": "/admin/logic",
+      "file": "apps/web/src/app/(dashboard)/admin/logic/page.tsx",
+      "title": "Карта логики (admin)",
+      "actions": [{ "label": "Просмотр промптов, API, агентов", "type": "local" }]
+    }
+  ],
+  "apiEndpoints": [
+    { "method": "GET", "path": "/health", "controller": "HealthController", "auth": false, "desc": "Liveness probe" },
+    { "method": "GET", "path": "/health/details", "controller": "HealthController", "auth": true, "desc": "DB + BullMQ + providers" },
+    { "method": "GET", "path": "/products", "controller": "ProductsController", "desc": "Каталог товаров (пагинация: page, pageSize, search, category)" },
+    { "method": "GET", "path": "/products/stats", "controller": "ProductsController", "desc": "Статистика каталога: total + categories" },
+    { "method": "GET", "path": "/catalog-external-image", "controller": "CatalogExternalImageController", "auth": false, "desc": "HTTPS-прокси HTTP-картинок поставщиков (midocean CDN)" },
+    { "method": "POST", "path": "/requests", "controller": "RequestsController", "desc": "Создать draft request" },
+    { "method": "POST", "path": "/requests/parse-brief", "controller": "RequestsController", "desc": "LLM parse свободного текста → structured brief" },
+    { "method": "GET", "path": "/requests/:id", "controller": "RequestsController", "desc": "Request + generation + agentRun + progress" },
+    { "method": "PATCH", "path": "/requests/:id", "controller": "RequestsController", "desc": "Update draft" },
+    { "method": "POST", "path": "/requests/:id/submit", "controller": "RequestsController", "desc": "draft → ready" },
+    { "method": "POST", "path": "/requests/:id/suggest-products", "controller": "RequestsController", "desc": "AI подбор набора из каталога" },
+    { "method": "POST", "path": "/requests/:id/suggest-product-add", "controller": "RequestsController", "desc": "5 SKU для добавления в набор" },
+    { "method": "POST", "path": "/requests/:id/generate", "controller": "RequestsController", "desc": "Первая генерация → BullMQ generate" },
+    { "method": "POST", "path": "/requests/:id/regenerate", "controller": "RequestsController", "desc": "Полная перегенерация сцены" },
+    { "method": "POST", "path": "/requests/:id/refine-visualization", "controller": "RequestsController", "desc": "Refine img2img → BullMQ refine" },
+    { "method": "POST", "path": "/requests/:requestId/assets/logo", "controller": "AssetsController", "desc": "Upload logo" },
+    { "method": "POST", "path": "/requests/:requestId/assets/reference", "controller": "AssetsController", "desc": "Upload reference" },
+    { "method": "POST", "path": "/requests/:requestId/agent-run", "controller": "AgentRunController", "desc": "Start concept discovery" },
+    { "method": "GET", "path": "/requests/:requestId/agent-run", "controller": "AgentRunController", "desc": "Poll agent status" },
+    { "method": "POST", "path": "/requests/:requestId/agent-run/select", "controller": "AgentRunController", "desc": "Выбор chosenIdeaTitle" },
+    { "method": "POST", "path": "/requests/:requestId/agent-run/retry", "controller": "AgentRunController", "desc": "Retry discovery" },
+    { "method": "GET", "path": "/jobs/:id", "controller": "JobsController", "desc": "BullMQ job status" }
+  ],
+  "bffRoutes": [
+    { "path": "/api/backend/[...path]", "file": "apps/web/src/app/api/backend/[...path]/route.ts", "desc": "Catch-all proxy → SUVENIR_API_URL + X-API-Key" },
+    { "path": "/api/concepts/generate", "file": "apps/web/src/app/api/concepts/generate/route.ts", "desc": "Create request + submit + logo" },
+    { "path": "/api/brief/parse", "file": "apps/web/src/app/api/brief/parse/route.ts", "desc": "Parse brief text" },
+    { "path": "/api/presentations/ai/generate", "file": "apps/web/src/app/api/presentations/ai/generate/route.ts", "desc": "AI-презентация: pipeline LLM + PPTX" },
+    { "path": "/api/presentations/generate", "file": "apps/web/src/app/api/presentations/generate/route.ts", "desc": "Презентация из визуализаций (proposals)" },
+    { "path": "/api/admin/logic", "file": "apps/web/src/app/api/admin/logic/route.ts", "desc": "Карта логики (admin)" },
+    { "path": "/api/brief/suggest-products", "file": "apps/web/src/app/api/brief/suggest-products/route.ts", "desc": "Legacy — не используется UI" },
+    { "path": "/api/concepts/discover", "file": "apps/web/src/app/api/concepts/discover/route.ts", "desc": "Legacy — не используется UI" },
+    { "path": "/api/concepts/render", "file": "apps/web/src/app/api/concepts/render/route.ts", "desc": "Legacy — не используется UI" }
+  ],
+  "queues": [
+    {
+      "name": "generation",
+      "file": "apps/api/src/generation/generation.queue.ts",
+      "worker": "GenerationProcessor",
+      "jobs": [
+        { "name": "generate", "jobType": "default", "trigger": "POST /requests/:id/generate|regenerate", "processor": "GenerationProcessor.process()" },
+        { "name": "refine", "jobType": "refine", "trigger": "POST /requests/:id/refine-visualization", "processor": "processRefineVisualizationJob()" }
+      ]
+    },
+    {
+      "name": "agent-run",
+      "file": "apps/api/src/agents/agent-run.queue.ts",
+      "worker": "AgentRunProcessor",
+      "jobs": [
+        { "name": "concepts", "trigger": "POST /requests/:id/agent-run", "processor": "AgentRunProcessor.process()" }
+      ]
+    }
+  ],
+  "agents": [
+    { "name": "IdeatorAgent", "file": "agents/ideator.agent.ts", "prompt": "SYSTEM_PROMPT_IDEATOR_CREATIVE", "model": "OPENROUTER_MODEL_IDEATOR = anthropic/claude-3-5-haiku", "when": "creative agent-run", "status": "active" },
+    { "name": "CriticAgent", "file": "agents/critic.agent.ts", "prompt": "SYSTEM_PROMPT_CRITIC_CREATIVE", "model": "OPENROUTER_MODEL_CRITIC = openai/gpt-4o-mini", "when": "creative: после ideator", "status": "active" },
+    { "name": "CatalogIdeatorAgent", "file": "agents/catalog-ideator.agent.ts", "prompt": "SYSTEM_PROMPT_IDEATOR_CATALOG", "model": "OPENROUTER_MODEL_CATALOG_IDEATOR = openai/gpt-4o-mini:floor", "when": "catalog agent-run: генерирует наборы-идеи", "status": "active" },
+    { "name": "CatalogNeuralSelectorService", "file": "agents/catalog-neural-selector.service.ts", "prompts": "оркестратор нейро-подбора: shortlist → buyer → set-critic → assembler", "model": "—", "when": "catalog подбор при CATALOG_NEURAL_SELECTOR=true (по умолчанию)", "status": "active", "statusNote": "Заменил rule-based toConcept" },
+    { "name": "CatalogBuyerAgent (нейро-байер)", "file": "agents/catalog-buyer.agent.ts", "prompt": "контракт catalog-neural-selector.types.ts", "model": "OPENROUTER_MODEL_CATALOG_SELECTOR = openai/gpt-4o-mini:floor", "when": "подбирает конкретные SKU по слотам из shortlist", "status": "active" },
+    { "name": "CatalogLlmSetCritic", "file": "providers/llm/catalog-llm-set-critic.util.ts", "prompt": "оценка собранного набора", "model": "CATALOG_LLM_CRITIC_MODEL = google/gemini-2.5-flash-lite", "when": "catalog: при CATALOG_LLM_CRITIC=true (включён)", "status": "active" },
+    { "name": "CatalogCriticAgent (legacy)", "file": "agents/catalog-critic.agent.ts", "prompt": "SYSTEM_PROMPT_CRITIC_CATALOG", "model": "OPENROUTER_MODEL_CATALOG_CRITIC", "when": "старый отбор топ-идей до нейро-селектора", "status": "deprecated", "statusNote": "Вытеснен CatalogLlmSetCritic в нейро-пайплайне" },
+    { "name": "PromptBuilderAgent", "file": "agents/prompt-builder.agent.ts", "prompt": "SYSTEM_PROMPT_PROMPTBUILDER_CREATIVE", "model": "OPENROUTER_MODEL_PROMPT = openai/gpt-4o-mini", "when": "creative generation time", "status": "active" },
+    { "name": "CatalogConceptService", "file": "agents/catalog-concept.service.ts", "prompts": "Ideator→fast pick→slot resolve; legacy: buildLlmSystemPromptForCatalogConcepts", "when": "catalog agent-run orchestration", "status": "active" },
+    { "name": "ConceptPreviewService", "file": "agents/concept-preview.service.ts", "prompt": "generateConceptPreview (inline OpenRouter)", "model": "OPENROUTER_IMAGE_MODEL_PREVIEW (Flux Klein)", "when": "creative previews если CREATIVE_FLUX_PREVIEW_ENABLED=true", "status": "conditional", "statusNote": "Выключено по умолчанию" },
+    { "name": "RouterAgent", "file": "agents/router.agent.ts", "prompt": "SYSTEM_PROMPT_ROUTER", "when": "—", "status": "deprecated", "statusNote": "Не в agents.module — удалён из pipeline" },
+    { "name": "LlmBriefService", "file": "providers/llm/llm-brief.service.ts", "prompts": "llm-prompts.ts + prepareCatalogPipeline", "when": "generation LLM + catalog SQL prefilter", "status": "active" }
+  ],
+  "imagePipeline": {
+    "chain": ["OpenRouter Image (primary)", "HuggingFace FLUX", "Pollinations flux", "Stable Horde", "Local mockup fallback"],
+    "chainNotes": {
+      "OpenRouter Image (primary)": "Основной путь: Gemini catalog/final + refs",
+      "HuggingFace FLUX": "fallback — только при сбое OpenRouter",
+      "Pollinations flux": "fallback img2img — только при сбое OpenRouter",
+      "Stable Horde": "fallback если IMAGE_PROVIDER=stablehorde",
+      "Local mockup fallback": "последний резерв без внешних API"
+    },
+    "toggles": ["AI_SKIP_OPENROUTER_IMAGE", "AI_SKIP_HUGGINGFACE", "AI_SKIP_POLLINATIONS", "AI_SKIP_HORDE", "AI_NO_MOCKUP_FALLBACK", "CREATIVE_FLUX_PREVIEW_ENABLED"],
+    "openrouter": {
+      "preview": { "env": "OPENROUTER_IMAGE_MODEL_PREVIEW", "default": "black-forest-labs/flux.2-klein-4b", "use": "Creative concept previews (опционально)", "status": "conditional", "statusNote": "CREATIVE_FLUX_PREVIEW_ENABLED=false по умолчанию" },
+      "catalog": { "env": "OPENROUTER_IMAGE_MODEL_CATALOG", "default": "google/gemini-3-pro-image-preview", "use": "Catalog final + creative с логотипом", "status": "active" },
+      "final": { "env": "OPENROUTER_IMAGE_MODEL_FINAL", "default": "google/gemini-2.5-flash-image", "use": "Creative final без лого", "status": "active" },
+      "refine": { "env": "OPENROUTER_REFINE_MODEL", "default": "same as FINAL", "use": "img2img refine", "status": "active" }
+    },
+    "promptBuilders": [
+      { "name": "buildCatalogAiImagePrompt", "file": "generation/catalog-ai-image-prompt.ts", "when": "ai + catalog final", "status": "active" },
+      { "name": "buildCreativeAiImagePrompt", "file": "generation/llm-image-prompt.ts", "when": "ai + creative final", "status": "active" },
+      { "name": "buildRefinementImagePrompt", "file": "generation/refine-visualization.prompt.ts", "when": "refine", "status": "active" },
+      { "name": "OPENROUTER_*_REF_PREAMBLE + buildLogoApplicationPrompt", "file": "generation/product-logo-branding.util.ts", "when": "hasLogo refs", "status": "active" },
+      { "name": "buildProductMockupPrompt", "file": "generation/prompt-builder.ts", "when": "mockup mode", "status": "active" },
+      { "name": "buildHfFluxPrompt", "file": "generation/hf-flux.prompt.ts", "when": "HF fallback chain", "status": "fallback", "statusNote": "Только если OpenRouter недоступен" },
+      { "name": "Pollinations enhancePrompt (inline)", "file": "ai-enhanced-mockup-image.provider.ts", "when": "Pollinations img2img fallback", "status": "fallback" },
+      { "name": "generateConceptPreview (inline)", "file": "openrouter-image.provider.ts", "when": "Flux Klein preview", "status": "conditional" }
+    ]
+  },
+  "llmRouting": {
+    "primary": "LLM_PROVIDER (stub | openrouter | gemini | deepseek)",
+    "generation": "LLM_GENERATION_PROVIDER + LLM_GENERATION_FALLBACK_CHAIN",
+    "prompts": [
+      { "fn": "buildLlmSystemPromptForBriefParse", "usedBy": "POST /requests/parse-brief", "status": "active" },
+      { "fn": "buildLlmSystemPrompt", "usedBy": "default generation interpret()", "status": "active" },
+      { "fn": "buildLlmSystemPromptForCreative", "usedBy": "creative generation LLM", "status": "active" },
+      { "fn": "buildLlmSystemPromptForScene", "usedBy": "catalog generation (products locked)", "status": "active" },
+      { "fn": "buildLlmSystemPromptForSuggest", "usedBy": "suggest-products", "status": "active" },
+      { "fn": "buildLlmSystemPromptForProductAdd", "usedBy": "suggest-product-add", "status": "active" },
+      { "fn": "buildLlmSystemPromptForCatalogConcepts", "usedBy": "CatalogConceptService legacy fallback", "status": "fallback", "statusNote": "Только если Ideator→Critic падает" },
+      { "fn": "buildLocal*SceneGenerationOutput", "usedBy": "llm-brief offline fallback", "status": "fallback" }
+    ]
+  },
+  "dataModel": [
+    { "entity": "Request", "key": "status", "flow": "draft → ready → generating → done/failed" },
+    { "entity": "AgentRun", "key": "status", "flow": "queued → running → awaiting_idea_selection → idea_selected" },
+    { "entity": "Generation", "key": "conceptResults", "desc": "JSON map: chosenIdeaTitle → { variants[], latestUrl }" },
+    { "entity": "VisualizationVariant", "desc": "DB records for refine history" },
+    { "entity": "RequestItem", "desc": "Product IDs linked to request" },
+    { "entity": "Product", "desc": "IMBA catalog 51 320 SKU / 98 категорий, sourceId (midocean, art24, …); топ: Отдых и спорт, Посуда, Зонты, Сувениры" },
+    { "entity": "Asset", "desc": "logo | reference uploads" },
+    { "entity": "BrandAsset", "desc": "Брендбук/лого библиотека пользователя" }
+  ],
+  "envGroups": [
+    { "title": "Security", "vars": ["API_SECRET_KEY", "PUBLIC_API_URL", "SUVENIR_API_URL", "NEXT_PUBLIC_API_BASE"] },
+    { "title": "LLM", "vars": ["LLM_PROVIDER", "LLM_GENERATION_PROVIDER", "OPENROUTER_API_KEY", "OPENROUTER_MODEL", "OPENROUTER_MODEL_IDEATOR", "OPENROUTER_MODEL_CRITIC", "OPENROUTER_MODEL_PROMPT", "OPENROUTER_MODEL_PRESENTATION"] },
+    { "title": "Image", "vars": ["IMAGE_PROVIDER=external", "OPENROUTER_IMAGE_MODEL_CATALOG=gemini-3-pro-image-preview", "OPENROUTER_IMAGE_MODEL_FINAL=gemini-2.5-flash-image", "OPENROUTER_REFINE_MODEL=gemini-2.5-flash-image", "OPENROUTER_IMAGE_MODEL_PREVIEW=flux.2-klein-4b", "AI_SKIP_OPENROUTER_IMAGE", "CREATIVE_FLUX_PREVIEW_ENABLED"] },
+    { "title": "Catalog нейро-подбор", "vars": ["CATALOG_NEURAL_SELECTOR=true", "OPENROUTER_MODEL_CATALOG_IDEATOR=gpt-4o-mini:floor", "OPENROUTER_MODEL_CATALOG_SELECTOR=gpt-4o-mini:floor", "CATALOG_LLM_CRITIC=true", "CATALOG_LLM_CRITIC_MODEL=gemini-2.5-flash-lite", "CATALOG_TARGET_CONCEPTS=5", "CATALOG_STRATIFIED_MAX=200", "CATALOG_TO_CONCEPT_PARALLEL=true", "CATALOG_IDEATOR_SKIP_LLM=false", "CATALOG_HANDOFF_DIR"] },
+    { "title": "Agents", "vars": ["AGENTS_ENABLED", "CREATIVE_AGENT_PIPELINE", "OPENROUTER_PREVIEW_ENABLED"] },
+    { "title": "Infrastructure", "vars": ["DATABASE_URL", "REDIS_URL", "UPLOADS_DIR", "GENERATION_LOCK_MS"] }
+  ],
+  "mermaid": {
+    "architecture": "flowchart TB\n  subgraph Browser[\"Browser :3000\"]\n    UI[Next.js UI]\n    Z[Zustand localStorage]\n  end\n  subgraph BFF[\"Next.js BFF\"]\n    Proxy[\"/api/backend/*\"]\n    GenRoute[\"/api/concepts/generate\"]\n    PresRoute[\"/api/presentations/*\"]\n  end\n  subgraph API[\"NestJS :3001\"]\n    C[Controllers]\n    GS[GenerationService]\n    AS[AgentRunService]\n    GQ[(queue: generation)]\n    AQ[(queue: agent-run)]\n  end\n  subgraph AI[\"OpenRouter\"]\n    LLM[LLM chat]\n    IMG[Image gen Gemini/Flux]\n  end\n  UI --> Proxy\n  UI --> GenRoute\n  UI --> PresRoute\n  Proxy --> C\n  GenRoute --> C\n  PresRoute --> LLM\n  C --> GS --> GQ\n  C --> AS --> AQ\n  GQ --> IMG\n  AQ --> LLM\n  AQ --> IMG\n  Z --> UI",
+    "creativeAgent": "flowchart LR\n  A[POST agent-run creative] --> B[AgentRunProcessor]\n  B --> C[IdeatorAgent]\n  C --> D[CriticAgent top 5]\n  D --> E{CREATIVE_FLUX_PREVIEW?}\n  E -->|да| F[Flux Klein preview x5]\n  E -->|нет| G[awaiting_idea_selection]\n  F --> G\n  G --> H[User picks]\n  H --> I[PromptBuilderAgent]\n  I --> J[OpenRouter Gemini final]",
+    "catalogAgent": "flowchart LR\n  A[POST agent-run catalog] --> B[prepareCatalogPipeline]\n  B --> C[SQL prefilter + stratified shortlist max 200]\n  C --> D[CatalogIdeator gpt-4o-mini:floor]\n  D --> E[CatalogBuyer нейро-байер: SKU по слотам gpt-4o-mini:floor]\n  E --> F[CatalogLlmSetCritic gemini-2.5-flash-lite]\n  F --> G[set-assembler 5 concepts parallel]\n  G --> H[awaiting_idea_selection]",
+    "generationWorker": "flowchart TD\n  J[BullMQ generate] --> P[GenerationProcessor]\n  P --> L{LLM phase}\n  L -->|creative+agents| PB[ConceptPromptService]\n  L -->|else| LB[LlmBriefService]\n  PB --> IP[Build image prompt]\n  LB --> IP\n  IP --> OR[OpenRouter Image PRIMARY]\n  OR -->|fail| FB[HF FLUX / Pollinations / Horde]\n  OR --> CR[mergeConceptResult]\n  FB --> CR\n  CR --> DB[(PostgreSQL)]"
+  },
+  "promptCatalog": [
+    { "id": "ideator-creative", "name": "SYSTEM_PROMPT_IDEATOR_CREATIVE", "category": "agent", "file": "apps/api/src/agents/prompts.ts", "usedBy": "IdeatorAgent.generateIdeas()", "purpose": "До 22 реалистичных идей сцен из брифа", "status": "active" },
+    { "id": "ideator-more", "name": "SYSTEM_PROMPT_IDEATOR_MORE", "category": "agent", "file": "apps/api/src/agents/prompts.ts", "usedBy": "IdeatorAgent (top-up)", "purpose": "Дополнительные идеи если мало", "status": "active" },
+    { "id": "critic-creative", "name": "SYSTEM_PROMPT_CRITIC_CREATIVE", "category": "agent", "file": "apps/api/src/agents/prompts.ts", "usedBy": "CriticAgent.pickTop5()", "purpose": "Выбор топ-5 creative идей", "status": "active" },
+    { "id": "promptbuilder", "name": "SYSTEM_PROMPT_PROMPTBUILDER_CREATIVE", "category": "agent", "file": "apps/api/src/agents/prompts.ts", "usedBy": "PromptBuilderAgent.buildPrompt()", "purpose": "English image prompt для creative final", "status": "active" },
+    { "id": "ideator-catalog", "name": "SYSTEM_PROMPT_IDEATOR_CATALOG", "category": "agent", "file": "apps/api/src/agents/prompts.ts", "usedBy": "CatalogIdeatorAgent.generateIdeas()", "purpose": "8 наборов SKU по слотам (fast: 1 попытка)", "status": "active" },
+    { "id": "ideator-catalog-more", "name": "SYSTEM_PROMPT_IDEATOR_CATALOG_MORE", "category": "agent", "file": "apps/api/src/agents/prompts.ts", "usedBy": "CatalogIdeatorAgent (top-up)", "purpose": "Доп. catalog-идеи", "status": "active" },
+    { "id": "critic-catalog", "name": "SYSTEM_PROMPT_CRITIC_CATALOG", "category": "agent", "file": "apps/api/src/agents/prompts.ts", "usedBy": "CatalogCriticAgent.pickTop5() (legacy)", "purpose": "LLM-отбор топ-5 catalog идей", "status": "deprecated", "statusNote": "Вытеснен нейро-селектором (CatalogBuyer + CatalogLlmSetCritic)" },
+    { "id": "catalog-buyer", "name": "CatalogBuyer (нейро-байер)", "category": "agent", "file": "apps/api/src/agents/catalog-buyer.agent.ts", "usedBy": "CatalogNeuralSelectorService", "purpose": "Подбор конкретных SKU по слотам из shortlist по контракту (catalog-neural-selector.types.ts)", "status": "active" },
+    { "id": "catalog-set-critic", "name": "CatalogLlmSetCritic", "category": "llm", "file": "apps/api/src/providers/llm/catalog-llm-set-critic.util.ts", "usedBy": "CatalogNeuralSelectorService", "purpose": "LLM-оценка собранного набора товаров (gemini-2.5-flash-lite)", "status": "active" },
+    { "id": "router", "name": "SYSTEM_PROMPT_ROUTER", "category": "agent", "file": "apps/api/src/agents/prompts.ts", "usedBy": "RouterAgent (удалён)", "purpose": "Роутер creative/catalog", "status": "deprecated", "statusNote": "RouterAgent не в DI, pipeline без роутера" },
+    { "id": "brief-parse", "name": "buildLlmSystemPromptForBriefParse", "category": "llm", "file": "apps/api/src/providers/llm/llm-prompts.ts", "usedBy": "POST /requests/parse-brief", "purpose": "Извлечение category/budget/colors из текста", "status": "active" },
+    { "id": "llm-default", "name": "buildLlmSystemPrompt", "category": "llm", "file": "apps/api/src/providers/llm/llm-prompts.ts", "usedBy": "LlmBriefService.interpret() default", "purpose": "Полная генерация: каталог + image_prompt", "status": "active" },
+    { "id": "catalog-concepts-legacy", "name": "buildLlmSystemPromptForCatalogConcepts", "category": "llm", "file": "apps/api/src/providers/llm/llm-prompts.ts", "usedBy": "CatalogConceptService catch", "purpose": "Legacy: 5 наборов одним LLM-вызовом", "status": "fallback", "statusNote": "Только при падении Ideator pipeline" },
+    { "id": "creative-llm", "name": "buildLlmSystemPromptForCreative", "category": "llm", "file": "apps/api/src/providers/llm/llm-prompts.ts", "usedBy": "creative generation", "purpose": "image_prompt для свободной генерации", "status": "active" },
+    { "id": "scene-llm", "name": "buildLlmSystemPromptForScene", "category": "llm", "file": "apps/api/src/providers/llm/llm-prompts.ts", "usedBy": "catalog generation locked SKUs", "purpose": "Сцена при фиксированных товарах", "status": "active" },
+    { "id": "suggest", "name": "buildLlmSystemPromptForSuggest", "category": "llm", "file": "apps/api/src/providers/llm/llm-prompts.ts", "usedBy": "suggest-products", "purpose": "Подбор набора из каталога", "status": "active" },
+    { "id": "product-add", "name": "buildLlmSystemPromptForProductAdd", "category": "llm", "file": "apps/api/src/providers/llm/llm-prompts.ts", "usedBy": "suggest-product-add", "purpose": "5 SKU для добавления в набор", "status": "active" },
+    { "id": "local-scene", "name": "buildLocalCatalogSceneGenerationOutput", "category": "llm", "file": "apps/api/src/providers/llm/local-scene-prompt.ts", "usedBy": "llm-brief offline fallback", "purpose": "Шаблон сцены без LLM", "status": "fallback" },
+    { "id": "catalog-ai", "name": "buildCatalogAiImagePrompt", "category": "image", "file": "apps/api/src/generation/catalog-ai-image-prompt.ts", "usedBy": "GenerationProcessor → OpenRouter", "purpose": "Финальный промпт catalog + refs", "status": "active" },
+    { "id": "creative-ai", "name": "buildCreativeAiImagePrompt", "category": "image", "file": "apps/api/src/generation/llm-image-prompt.ts", "usedBy": "GenerationProcessor → OpenRouter", "purpose": "Финальный промпт creative", "status": "active" },
+    { "id": "refine", "name": "buildRefinementImagePrompt", "category": "image", "file": "apps/api/src/generation/refine-visualization.prompt.ts", "usedBy": "generateRefinement()", "purpose": "Edit-instruction для refine", "status": "active" },
+    { "id": "logo-branding", "name": "OPENROUTER_CATALOG_LOGO_REF_PREAMBLE", "category": "image", "file": "apps/api/src/generation/product-logo-branding.util.ts", "usedBy": "OpenrouterImageProvider refs", "purpose": "Правила нанесения логотипа на refs", "status": "active" },
+    { "id": "preview-flux", "name": "generateConceptPreview", "category": "image", "file": "apps/api/src/providers/image/openrouter-image.provider.ts", "usedBy": "ConceptPreviewService", "purpose": "Короткий промпт Flux Klein превью", "status": "conditional", "statusNote": "CREATIVE_FLUX_PREVIEW_ENABLED=false" },
+    { "id": "hf-flux", "name": "buildHfFluxPrompt", "category": "image", "file": "apps/api/src/generation/hf-flux.prompt.ts", "usedBy": "AiEnhancedMockupImageProvider HF fallback", "purpose": "Сжатый промпт для HuggingFace FLUX", "status": "fallback", "statusNote": "Не основной путь — только при сбое OpenRouter" },
+    { "id": "pollinations-flux", "name": "enhancePrompt (Pollinations inline)", "category": "image", "file": "apps/api/src/providers/image/ai-enhanced-mockup-image.provider.ts", "usedBy": "Pollinations img2img fallback", "purpose": "img2img enhance через Pollinations flux", "status": "fallback", "statusNote": "Не основной путь" },
+    { "id": "pres-brand", "name": "buildBrandAnalysisSystemPrompt", "category": "presentation", "file": "apps/web/src/lib/presentation-ai/prompts/brand-analysis.ts", "usedBy": "presentation-ai pipeline step 1", "purpose": "Анализ бренда для презентации", "status": "active" },
+    { "id": "pres-concept", "name": "buildConceptSystemPrompt", "category": "presentation", "file": "apps/web/src/lib/presentation-ai/prompts/concept.ts", "usedBy": "presentation-ai pipeline step 2", "purpose": "Концепция и структура слайдов", "status": "active" },
+    { "id": "pres-copy", "name": "buildCopywritingSystemPrompt", "category": "presentation", "file": "apps/web/src/lib/presentation-ai/prompts/copywriting.ts", "usedBy": "presentation-ai pipeline step 3", "purpose": "Тексты слайдов + product stories", "status": "active" },
+    { "id": "pres-closing", "name": "buildClosingCopySystemPrompt", "category": "presentation", "file": "apps/web/src/lib/presentation-ai/prompts/copywriting.ts", "usedBy": "presentation-ai closing slide", "purpose": "Текст финального слайда", "status": "active" },
+    { "id": "pres-refine", "name": "buildSlideRefineSystemPrompt", "category": "presentation", "file": "apps/web/src/lib/presentation-ai/prompts/slide-refine.ts", "usedBy": "regenerate-slide API", "purpose": "Перегенерация текста одного слайда", "status": "active" },
+    { "id": "pres-cover-img", "name": "buildCoverImagePrompt", "category": "presentation", "file": "apps/web/src/lib/presentation-ai/prompts/image-prompts.ts", "usedBy": "—", "purpose": "AI-обложка презентации", "status": "unused", "statusNote": "Нет импортов — слайды используют фото каталога" },
+    { "id": "pres-closing-img", "name": "buildClosingImagePrompt", "category": "presentation", "file": "apps/web/src/lib/presentation-ai/prompts/image-prompts.ts", "usedBy": "—", "purpose": "AI-фон closing slide", "status": "unused" },
+    { "id": "pres-overview-img", "name": "buildCollectionOverviewImagePrompt", "category": "presentation", "file": "apps/web/src/lib/presentation-ai/prompts/image-prompts.ts", "usedBy": "—", "purpose": "AI overview слайд", "status": "unused" },
+    { "id": "pres-qa", "name": "buildQaSystemPrompt", "category": "presentation", "file": "apps/web/src/lib/presentation-ai/prompts/qa.ts", "usedBy": "—", "purpose": "QA проверка презентации", "status": "unused", "statusNote": "qa.service.ts не подключён к pipeline" },
+    { "id": "pres-legacy", "name": "SYSTEM_PROMPT (presentation-llm)", "category": "presentation", "file": "apps/web/src/lib/presentation/presentation-llm.ts", "usedBy": "—", "purpose": "Legacy deck copy", "status": "unused", "statusNote": "generatePresentationSlidesWithAi() нигде не импортируется" }
+  ]
+}

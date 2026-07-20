@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+  <rect width="200" height="200" fill="#F9FAFB"/>
+  <ellipse cx="100" cy="100" rx="70" ry="35" fill="#7C3AED"/>
+  <ellipse cx="100" cy="95" rx="65" ry="30" fill="#8B5CF6"/>
+  <text x="100" y="175" text-anchor="middle" fill="#6B7280" font-family="system-ui,sans-serif" font-size="10">>4CH:0 · D8>;5B>20O</text>
+</svg>

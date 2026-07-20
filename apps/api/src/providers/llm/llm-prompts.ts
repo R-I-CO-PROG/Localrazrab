@@ -4,10 +4,6 @@ import {
   MANDATORY_TYPE_MAX_CONCEPTS,
   OPTIONAL_TYPE_MAX_CONCEPTS,
 } from './concept-diversity.util';
-import {
-  BRIEF_ALLOWED_BUCKETS,
-  BRIEF_FORBIDDEN_BUCKETS,
-} from '../../catalog/brief-category-buckets.util';
 
 /** Генерация сцены: товары уже выбраны из каталога — описать окружение, НЕ менять цвет SKU */
 export function buildLlmSystemPromptForScene(): string {
@@ -95,9 +91,7 @@ Respond ONLY with valid JSON (no markdown):
   "budget_max": 5000,
   "budget_scope": "per_set",
   "colors": ["#1E3A8A"],
-  "allowed_items": ["product categories that fit the client BY MEANING — see the ALLOWED list in the rules below"],
-  "forbidden_items": [],
-  "forbidden_named": [],
+  "allowed_items": ["ONLY from this exact list: Ручки, Кружки, Ежедневники и блокноты, Термосы и бутылки, Сумки и рюкзаки, Текстиль, Электроника, Подарочные наборы, Офис и канцелярия, Сувениры и награды, Зонты, Часы, Отдых и спорт. Pick ALL that match the brief — not just one. E.g. 'термос и ежедневник' → ['Термосы и бутылки', 'Ежедневники и блокноты']. Never invent categories outside this list."],
   "set_item_count": 5,
   "mandatory_types": ["tshirt"],
   "alternative_type_groups": [["thermos", "mug"]],
@@ -116,17 +110,8 @@ Rules:
   - "или термос, или кружка" → mandatory_types: [], alternative_type_groups: [["thermos", "mug"]]
   - "блокнот и ручка, и зонт или дождевик" → mandatory_types: ["notebook", "pen"], alternative_type_groups: [["umbrella", "raincoat"]]
 - Map color words to hex: тёмно-синий #1E3A8A, синий #3B82F6, фиолетовый #7C5CFC, зелёный #22C55E, etc. Respect "не белый/не розовый" — do not include excluded colors.
-- "allowed_items" — decide BY MEANING which product categories suit this brief (audience, occasion, industry, theme, explicitly named products) — NOT by literal keyword matching. Pick ALL that fit, not just the broadest one. Choose ONLY from this exact ALLOWED list, never invent categories: ${BRIEF_ALLOWED_BUCKETS.join(', ')}. Never include a category the client NEGATES (see the NEGATION rule). Example: 'термос и ежедневник для айтишников' → ['Термосы и бутылки', 'Ежедневники и блокноты', 'Электроника'].
-- "forbidden_items" — decide BY MEANING which categories the client does NOT want, choosing ONLY from this exact FORBIDDEN list: ${BRIEF_FORBIDDEN_BUCKETS.join(', ')}. Use for explicit product exclusions (see the NEGATION rule below for how to judge "без …" / "не предлагать …" / "нельзя …") OR things already given before ("в прошлом дарили …" → do NOT offer again). If the brief names no exclusions, return []. NEVER add a category (especially "Алкоголь") by default or as a guess.
-- "forbidden_named" — free-text categories/products the client does NOT want that are NOT in the FORBIDDEN list above (e.g. зонты, кружки, ежедневники, колонки, часы). Put the plain Russian category word. Example: 'не подбирай зонты' → forbidden_named: ['зонты']. Return [] if none.
-- NEGATION ("не подбирай / не нужны / без / убери / не добавляй / нельзя X") is a SIGNAL to examine, not an automatic rule. For each negated X, genuinely judge what X refers to before deciding where it goes:
-  - X is a GIFT ITEM/PRODUCT the client refuses to receive (зонты, алкоголь, парфюм, колонки) → put X in forbidden_items (if it matches the FORBIDDEN list) or forbidden_named, and X MUST NOT appear in allowed_items/named_items.
-  - X is NOT a product but a logistics/pricing/presentation qualifier — how the set is packaged, priced, delivered, or engraved (без упаковки, без ложемента, без коробки, без НДС, без гравировки, без доставки) — this is NOT a forbidden product, even though "без" is present. Put the qualifier into "notes" instead; do NOT add it to forbidden_items or forbidden_named.
-  - Test: could X itself ever be picked as a standalone gift item from a merchandise catalog? If yes (зонт, кружка, колонка) → real exclusion. If no (упаковка, НДС, доставка, гравировка — these describe HOW the gift is presented/priced, not WHAT the gift is) → it's a qualifier, goes to notes.
-  - Example: "1-4 товара в наборе, без упаковки" → notes: "без упаковки" (packaging note about set presentation) — упаковка does NOT go into forbidden_named. "не подбирай зонты" → forbidden_named: ["зонты"] (real product exclusion).
-  - "упаковка"/"коробка"/"ложемент"/"гравировка"/"НДС"/"доставка" are NEVER valid forbidden_named entries under any phrasing — they are presentation/logistics/pricing terms, not gift items. Do not add them there even if they follow "без". This overrides the general NEGATION heuristic above for these specific terms.
-  - WRONG: forbidden_named: ["упаковки", ...] AND notes: "без упаковки" together (contradicts itself — pick ONE place, and it must be notes).
-  - CORRECT: forbidden_named: [] (or omitting упаковка entirely from it), notes: "без упаковки".
+- "allowed_items" = product categories client wants — ONLY from: Ручки, Кружки, Ежедневники и блокноты, Термосы и бутылки, Сумки и рюкзаки, Текстиль, Электроника, Подарочные наборы, Офис и канцелярия, Сувениры и награды, Зонты, Часы, Отдых и спорт. Pick ALL matching categories, not just the broadest one
+- "forbidden_items" = ONLY explicit exclusions in task (алкоголь, еда, одежда). OMIT if none mentioned. NEVER add "Алкоголь" by default.
 - Omit JSON keys you cannot infer confidently — do not guess wildly`;
 }
 

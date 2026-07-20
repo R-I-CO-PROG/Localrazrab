@@ -20,18 +20,7 @@ RULES:
 - If hasLogo=true: logo on real items (print, emboss, patch).
 - items[].notes = specific product idea in Russian (shape, material, twist).
 
-DIVERSITY (critical — client wants MAXIMALLY DIFFERENT concepts):
-- Every idea explores a DIFFERENT angle: different hero product, different scenario/mood, different product mix. No two sets may feel like variations of one idea.
-- Do NOT repeat the same generic backbone (кружка + ручка + блокнот) across sets. Rotate categories, materials, use-cases, price tiers, emotions (bold / cozy / techy / eco / playful / premium).
-
-COHERENCE (within each set):
-- Every item in a set belongs to ONE story — each product complements the others AND reinforces the concept title AND fits the brief's audience/occasion. No off-theme filler (e.g. no backpack in a cozy fireplace-evening set).
-
-SET SIZE (MUST vary — do NOT lazily output 3 every time):
-- Deliberately mix set sizes across your ideas: some sets 3 items, some 4, some 5. A rich gift often has 4–5 items — prefer 4–5 for fuller concepts, use 3 only for deliberately minimalist ones.
-- It is a FAILURE if all sets have the same number of items. Vary it on purpose.
-
-QUALITY: briefFit, feasibility, commercial usefulness, distinct products, intra-set coherence.
+QUALITY: briefFit, feasibility, commercial usefulness, distinct products.
 
 Schema:
 {"ideas":[{"title":"...","hook":"...","description":"...","styleTags":["..."],"whyItFits":"...","briefFitExplanation":"...","coreIdea":"...","items":[{"productType":"powerbank","notes":"Повербанк в форме картофеля, матовый пластик","priority":"must","productRole":"tech"}]}]}
@@ -110,8 +99,7 @@ Schema: {"chosenIdeaTitle":"...","imagePrompt":"English, max 1200 chars. Ultra p
 Rules:
 - chosenConcept.items is the ONLY subject matter — every item visible
 - Client industry = mood/colors only, never illustrate that industry literally
-- One cohesive merch photograph, 8k commercial quality
-- If brief.sceneWish is present, it is the client's EXPLICIT scene/background request — the imagePrompt AND the "background" field MUST follow it exactly (e.g. "серый фон" → plain grey background/backdrop), OVERRIDING the default neutral/dark surface. Do not add an interior, room or environment the client did not ask for.`;
+- One cohesive merch photograph, 8k commercial quality`;
 
 export const SYSTEM_PROMPT_PROMPTBUILDER = SYSTEM_PROMPT_PROMPTBUILDER_CREATIVE;
 
@@ -129,14 +117,6 @@ INPUT:
 - catalog_overview — full assortment structure (IMBA category branches, e.g. "Продукция / Кухня и посуда")
 - allowed_product_types — valid type slugs
 - mandatory_types_from_brief — types client explicitly requested
-- audience_focus — when present, a HARD steer: theme EVERY concept (title, composition, productSlots) around this audience/preference and obey its dos/don'ts. Do NOT drift into generic office sets ("Стильный офис", "Вдохновение") that ignore it.
-- occasion — when present (from a separate brief-intent classification step, e.g. "VIP", "Новый год", "Раздаточные материалы для ивентов", "Гендерные"), it is a HARD steer on TONE and BUDGET TIER, not a product category:
-  - VIP → fewer, premium/expensive slots (within budget_per_set), refined titles/composition, no cheap giveaway items
-  - Раздаточные материалы для ивентов / mass event handouts → MORE, cheaper simple slots, practical and quick to distribute, no premium framing
-  - Seasonal/festive occasion (Новый год, Профессиональный праздник, …) → apply the season/occasion coherence rules above using THIS occasion, not a guess from clientBrief text alone
-  - Гендерные → tailor style/color/type choices to the stated gender framing
-  - Any other free-text occasion the classifier returned → treat literally, do not ignore it in favor of a generic angle
-- requiredMaterial — when present (e.g. "кожа" from "полностью кожаный набор"), it is a STRONG preference, but AUDIENCE/OCCASION FIT COMES FIRST: pick slot types that genuinely fit the client's audience and occasion, THEN prefer this material for those slots wherever the catalog realistically offers it (e.g. bags/notebooks/wallets/belts in leather). NEVER pick an off-theme slot type just because it exists in the material (e.g. a cosmetic bag/wallet for a construction-company brief is wrong even if it's leather — that audience needs work-appropriate items, not personal accessories). If a genuinely audience-fitting slot type rarely comes in this material, keep the slot type and just note the material preference — do not drop a relevant slot type or substitute an irrelevant one solely to satisfy the material.
 
 TASK: Generate exactly 10 DISTINCT gift set concepts.
 

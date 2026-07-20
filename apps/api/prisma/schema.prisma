@@ -30,14 +30,6 @@ model Product {
   depthCm            Float?
   /** Вес товара, граммы */
   weightG            Float?
-  material           String?
-  /** Ключевые характеристики товара (LLM-тег: soft touch, водостойкий, складной…) */
-  characteristics    String[]      @default([])
-  /** true если товар уже прошёл LLM-тегирование material/characteristics (даже если
-   *  результат пустой — товар без явного материала/характеристик в тексте). Отдельный флаг,
-   *  а не material IS NULL, т.к. пустой результат неотличим от «ещё не обработан». */
-  materialTagged     Boolean       @default(false)
-  brandings          ProductBranding[]
   createdAt          DateTime      @default(now())
   requestItems       RequestItem[]
 
@@ -84,7 +76,6 @@ model Request {
   assets             Asset[]
   generation         Generation?
   agentRun           AgentRun?
-  precisionSession   PrecisionSession?
 }
 
 enum AgentRunStatus {
@@ -186,54 +177,213 @@ model VisualizationVariant {
 
   @@index([generationId, sortOrder])
 }
+// --- Auth & credits (Better Auth, совместимо с mercai.ru) ---
 
-model ProductBranding {
-  id           String  @id @default(cuid())
-  productId    String
-  product      Product @relation(fields: [productId], references: [id], onDelete: Cascade)
-
-  /** null = метод доступен, но зона в фиде не указана (art24) */
-  zoneName     String?
-  zoneNameRu   String?
-  methodRaw    String
-  methodCode   String
-  maxWidthMm   Int?
-  maxHeightMm  Int?
-  maxAreaMm2   Int?
-  maxColors    Int?
-  setupCost    Float?
-  /** Картинка зоны нанесения от midocean */
-  zoneImageUrl String?
-  source       String
-
-  @@index([productId])
-  @@index([productId, methodCode])
+enum UserRole {
+  USER
+  MANAGER
+  ADMIN
 }
 
-model PrecisionSession {
-  id             String            @id @default(cuid())
-  requestId      String            @unique
-  request        Request           @relation(fields: [requestId], references: [id], onDelete: Cascade)
-  sourceImageUrl String
-  productId      String?
-  outputMode     String            @default("edit")
-  config         Json
-  createdAt      DateTime          @default(now())
-  renders        PrecisionRender[]
+enum PlanType {
+  STARTER
+  BUSINESS
+  ENTERPRISE
 }
 
-model PrecisionRender {
-  id            String           @id @default(cuid())
-  sessionId     String
-  session       PrecisionSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  status        String           @default("queued")
-  draftImageUrl String?
-  imageUrl      String?
-  imagePrompt   String?
-  judgeVerdict  Json?
-  error         String?
-  sortOrder     Int              @default(0)
-  createdAt     DateTime         @default(now())
-
-  @@index([sessionId, sortOrder])
+enum CreditAction {
+  CONCEPT_GENERATION
+  VISUALIZATION
+  PDF_EXPORT
+  PPTX_EXPORT
+  DOCX_EXPORT
+  ADMIN_GRANT
 }
+
+model User {
+  id               String    @id
+  name             String    @default("")
+  email            String    @unique
+  emailVerified    Boolean   @default(false)
+  image            String?
+  role             UserRole  @default(USER)
+  blocked          Boolean   @default(false)
+  blockedAt        DateTime?
+  credits          Int       @default(0)
+  plan             PlanType  @default(STARTER)
+  stripeCustomerId String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  sessions   Session[]
+  accounts   Account[]
+  creditLogs CreditLog[]
+  blacklistItems UserBlacklistItem[]
+  brandAssets BrandAsset[]
+  workspace   UserWorkspace?
+  aiPresentationJobs AiPresentationJob[]
+
+  @@map("user")
+}
+
+enum BrandAssetType {
+  logo
+  brandbook
+}
+
+model BrandAsset {
+  id           String         @id @default(cuid())
+  userId       String
+  type         BrandAssetType
+  name         String
+  fileUrl      String
+  thumbnailUrl String?
+  mimeType     String
+  size         Int
+  metadata     Json?
+  deletedAt    DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, type])
+  @@map("brand_asset")
+}
+
+model UserWorkspace {
+  userId    String   @id
+  payload   Json
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_workspace")
+}
+
+enum BlacklistItemType {
+  product
+  supplier
+}
+
+model UserBlacklistItem {
+  id        String             @id @default(cuid())
+  userId    String
+  projectId String?
+  itemType  BlacklistItemType
+  itemId    String
+  title     String
+  createdAt DateTime           @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, itemType, itemId])
+  @@index([userId])
+  @@map("user_blacklist_item")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+model CreditLog {
+  id        String       @id @default(cuid())
+  userId    String
+  action    CreditAction
+  amount    Int
+  balance   Int
+  metadata  Json?
+  createdAt DateTime     @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// --- Тестер подбора (/admin/tester) ---
+
+model TesterRun {
+  id           String   @id @default(cuid())
+  createdAt    DateTime @default(now())
+  ok           Boolean  @default(false)
+  score        Int? // 0..100; null если прогон упал
+  elapsedSec   Int?
+  prompt       String // текст брифа
+  problemCount Int      @default(0)
+  error        String?
+  result       Json // полный снимок: concepts, products, rules, judge, problems
+
+  @@index([createdAt])
+  @@index([ok])
+}
+
+// --- Suvenir API models (не удалять при db push на общей БД) ---
+enum AiPresentationStatus {
+  queued
+  analyzing_brand
+  generating_concept
+  generating_copy
+  generating_images
+  rendering_slides
+  exporting
+  completed
+  failed
+}
+model AiPresentationJob {
+  id        String               @id
+  userId    String?
+  title     String               @default("")
+  status    AiPresentationStatus @default(queued)
+  progress  Int                  @default(0)
+  data      Json
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@map("ai_presentation_job")
+}
+

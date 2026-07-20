@@ -1,6 +1,5 @@
 import { defaultItemCount, parseDesiredItemCount } from './parse-desired-count';
 import { filterCatalogByBriefBuckets } from '../../catalog/brief-category-buckets.util';
-import { filterOutForbidden } from './catalog-forbidden-match.util';
 import {
   dedupeProductsByVariant,
   indexCatalogByName,
@@ -39,10 +38,6 @@ export interface CatalogProduct {
   weightG?: number | null;
   /** Семантический fit к интенту аудитории (cos+ − cos−), проставляется из pgvector. */
   semanticFit?: number | null;
-  /** Материал (LLM-тег по каталогу), стем-матчится напрямую в productMatchesMaterial. */
-  material?: string | null;
-  /** Ключевые характеристики (LLM-тег: soft touch, водостойкий, складной…). */
-  characteristics?: string[];
 }
 
 export function filterCatalogByBlacklist(
@@ -112,11 +107,7 @@ export function filterCatalogByConstraints(
   allowedItems: string[],
   forbiddenItems: string[],
 ): CatalogProduct[] {
-  const byBuckets = filterCatalogByBriefBuckets(catalog, allowedItems, forbiddenItems);
-  // Категорийные бакеты не ловят свободнотекстовые запреты («пауэр банки», «колонки») — добиваем
-  // универсальным матчером по имени/категории. Guard от полного обнуления пула широким паттерном.
-  const cleaned = filterOutForbidden(byBuckets, forbiddenItems);
-  return cleaned.length > 0 ? cleaned : byBuckets;
+  return filterCatalogByBriefBuckets(catalog, allowedItems, forbiddenItems);
 }
 
 function isMugProduct(name: string): boolean {

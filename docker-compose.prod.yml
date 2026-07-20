@@ -1,0 +1,83 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-suvenir}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-suvenir}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-suvenir}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-suvenir}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-suvenir}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      UPLOADS_DIR: /app/uploads
+      CATALOG_HANDOFF_DIR: /app/data/catalog-handoff-full
+    volumes:
+      - uploads_data:/app/uploads
+      - ./data/catalog-handoff-full:/app/data/catalog-handoff-full:ro
+    networks:
+      - internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # API не публикуем наружу — только web-контейнер
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: web
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      SUVENIR_API_URL: http://api:3001
+      NEXT_PUBLIC_API_BASE: /api/backend
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    networks:
+      - internal
+    depends_on:
+      - api
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:

@@ -1,0 +1,10 @@
+import type { CriticOutput, IdeatorIdea, IdeatorOutput, CatalogIdeatorOutput } from './contracts';
+export declare function extractJsonObject(text: string): string;
+export declare function repairAgentJsonText(jsonText: string): string;
+export declare function truncateToLastCompleteIdeaObject(jsonText: string, maxPos?: number): string;
+export declare function extractIdeasByRegex(text: string): IdeatorIdea[];
+export declare function extractCriticTopByRegex(text: string): CriticOutput['topIdeas'];
+export declare function parseAgentJson<T>(content: string): T;
+export declare function parseIdeatorOutput(content: string): IdeatorOutput;
+export declare function parseCatalogIdeatorOutput(content: string): CatalogIdeatorOutput;
+export declare function parseCriticOutput(content: string): CriticOutput;

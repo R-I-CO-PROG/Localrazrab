@@ -1,0 +1,24 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: suvenir
+      POSTGRES_PASSWORD: suvenir
+      POSTGRES_DB: suvenir
+    ports:
+      - '5433:5432'   # 5433 снаружи — чтобы не конфликтовать с локальным PostgreSQL на Windows
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:

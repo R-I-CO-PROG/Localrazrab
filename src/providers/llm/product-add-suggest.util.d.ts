@@ -1,0 +1,16 @@
+import type { CatalogProduct } from './catalog.util';
+import type { CatalogFilterInput } from './catalog-filter.util';
+export declare function extractColorHintsFromText(text: string): string[];
+export declare function detectProductTypeRules(hint: string): RegExp[];
+export declare function productMatchesHintType(product: CatalogProduct, hint: string): boolean;
+export declare function detectProductTypesFromAddHint(hint: string): string[];
+export declare function hasExplicitProductTypeHint(hint: string): boolean;
+export declare function productMatchesAddHint(product: CatalogProduct, hint: string): boolean;
+export declare function resolveEffectiveAddColors(hint: string, projectColors: string[]): string[];
+export declare function productMatchesHintColors(product: CatalogProduct, hintColorLabels: string[]): boolean;
+export declare function localSuggestProductsForAdd(catalog: CatalogProduct[], hint: string, input: CatalogFilterInput, count: number, excludeVariantKeys: Set<string>): CatalogProduct[];
+export declare function filterCatalogForProductAdd(catalog: CatalogProduct[], quantity: number | null | undefined): CatalogProduct[];
+export declare function buildCatalogCandidatesForProductAdd(catalog: CatalogProduct[], hint: string, input: CatalogFilterInput, maxItems?: number): Promise<CatalogProduct[]>;
+export declare function mergeHintColorsWithBrand(hint: string, brandColors: string[]): string[];
+export declare function parseProductAddReasons(composition: string): string[];
+export declare function buildProductAddReason(product: CatalogProduct, hint: string, llmReason?: string): string;

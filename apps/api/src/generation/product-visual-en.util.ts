@@ -1,0 +1,50 @@
+/** Английские описания товаров для image/LLM промптов */
+const PRODUCT_VISUAL_EN: Record<string, string> = {
+  'Термокружка': 'stainless steel insulated travel mug with handle and lid',
+  'Термос дорожный': 'tall matte black travel thermos flask',
+  'Кружка керамическая': 'matte ceramic coffee mug with C-handle',
+  'Стакан стеклянный': 'clear glass tumbler with silicone sleeve',
+  'Бамбуковая кружка':
+    'natural bamboo fiber reusable eco coffee mug with visible bamboo grain texture and C-handle, matte tan-beige finish — NOT disposable paper cup, NOT plastic takeaway cup, NO lid',
+  'Бутылка стеклянная': 'glass water bottle with cap',
+  'Ланчбокс': 'matte plastic lunch box container',
+  'Тарелка': 'ceramic dinner plate',
+  'Блокнот A5': 'black hardcover A5 notebook',
+  'Блокнот A6':
+    'rectangular closed A6 hardcover paper notebook with visible front cover and spine, stationery book — NOT a mug, NOT a cup, NOT drinkware',
+  'Блок для записей': 'black notepad',
+  'Ручка шариковая': 'black ballpoint pen',
+  'Карандаш': 'wooden pencil',
+  'Сумка тоут': 'black canvas tote bag',
+  'Шоппер': 'black cotton shopper bag',
+  'Рюкзак': 'minimal black backpack',
+  'Welcome Box': 'premium black gift box',
+  'Onboarding Kit': 'corporate welcome kit box',
+  'Подарочная коробка': 'elegant gift box',
+  'Powerbank 5000 mAh': 'compact black power bank',
+  'Powerbank 10000 mAh': 'slim black power bank',
+  'Флешка 32 ГБ': 'metal USB drive',
+  'Кепка': 'structured six-panel baseball cap with curved brim and adjustable strap',
+  'Футболка базовая': 'folded black t-shirt',
+  'Футболка премиум': 'premium folded black cotton t-shirt',
+  'Поло': 'black polo shirt with collar',
+  'Худи': 'black hoodie',
+  'Свитшот': 'black crewneck sweatshirt',
+  'Бини': 'black knit beanie hat',
+  'Носки': 'pair of black crew socks',
+  'Папка': 'black document folder',
+  'Беспроводная зарядка': 'compact black wireless charging pad',
+  'Портативная колонка': 'compact black bluetooth speaker',
+  'Мешок для обуви': 'black drawstring shoe gym bag with pull cords, soft fabric sack',
+  'Брелок': 'small metal keychain with split ring, compact accessory',
+  'Набор для выращивания': 'small eco plant grow kit in box',
+  'Зонт': 'black compact umbrella',
+  'Ланьярд': 'black lanyard with badge clip',
+  'Подарочный пакет': 'black premium gift bag',
+  'Органайзер для стола': 'black desk organizer tray',
+  'Коврик для мыши': 'black mouse pad',
+};
+
+export function describeProductEn(name: string): string {
+  return PRODUCT_VISUAL_EN[name] ?? `corporate promotional ${name}`;
+}
