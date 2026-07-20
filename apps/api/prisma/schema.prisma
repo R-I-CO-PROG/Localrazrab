@@ -1,0 +1,239 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Product {
+  id                 String        @id @default(cuid())
+  slug               String        @unique
+  name               String
+  category           String
+  subcategory        String?
+  description        String?
+  sourceId           String?
+  externalId         String?
+  price              Float?
+  currency           String        @default("RUB")
+  stockAvailable     Int           @default(0)
+  colors             Json          @default("[]")
+  sourceUrl          String?
+  silhouetteImageUrl String
+  /** Студийное фото товара для каталога и мокапа */
+  catalogImageUrl    String?
+  /** Габариты товара (см) для правильного относительного масштаба на визуализации */
+  widthCm            Float?
+  heightCm           Float?
+  depthCm            Float?
+  /** Вес товара, граммы */
+  weightG            Float?
+  material           String?
+  /** Ключевые характеристики товара (LLM-тег: soft touch, водостойкий, складной…) */
+  characteristics    String[]      @default([])
+  /** true если товар уже прошёл LLM-тегирование material/characteristics (даже если
+   *  результат пустой — товар без явного материала/характеристик в тексте). Отдельный флаг,
+   *  а не material IS NULL, т.к. пустой результат неотличим от «ещё не обработан». */
+  materialTagged     Boolean       @default(false)
+  brandings          ProductBranding[]
+  createdAt          DateTime      @default(now())
+  requestItems       RequestItem[]
+
+  @@unique([sourceId, externalId])
+  @@index([category])
+  @@index([stockAvailable])
+  @@index([price])
+}
+
+enum RequestStatus {
+  draft
+  ready
+  generating
+  done
+  failed
+}
+
+model Request {
+  id                 String         @id @default(cuid())
+  title              String         @default("Новая концепция")
+  userPrompt         String         @default("")
+  category           String         @default("Welcome Pack")
+  budgetMin          Int?
+  budgetMax          Int?
+  quantity           Int?
+  setItemCount       Int?
+  useProductCountLimit Boolean      @default(true)
+  minProductsPerSet  Int?
+  maxProductsPerSet  Int?
+  conceptCount       Int            @default(5)
+  visualizationCount Int            @default(1)
+  colors             Json           @default("[]")
+  allowedItems       Json           @default("[]")
+  forbiddenItems     Json           @default("[]")
+  blacklistedProductIds Json        @default("[]")
+  blacklistedSupplierIds Json       @default("[]")
+  notes              String?
+  status             RequestStatus  @default(draft)
+  generationCount    Int            @default(0)
+  generationLockedAt DateTime?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  items              RequestItem[]
+  assets             Asset[]
+  generation         Generation?
+  agentRun           AgentRun?
+  precisionSession   PrecisionSession?
+}
+
+enum AgentRunStatus {
+  queued
+  running
+  awaiting_product_selection
+  awaiting_idea_selection
+  idea_selected
+  done
+  failed
+}
+
+enum AgentRoute {
+  DIRECT_PRODUCT
+  IDEATION_PIPELINE
+}
+
+model AgentRun {
+  id              String          @id @default(cuid())
+  requestId       String          @unique
+  status          AgentRunStatus  @default(queued)
+  route           AgentRoute?
+  currentStep     String?
+  routerOutput    Json?
+  ideatorOutput   Json?
+  criticOutput    Json?
+  promptOutput    Json?
+  directProducts  Json?
+  conceptsOutput    Json?
+  chosenIdeaTitle String?
+  imageResultUrl  String?
+  error           String?
+  debugEnabled    Boolean         @default(false)
+  debugLog        Json?
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  request         Request         @relation(fields: [requestId], references: [id], onDelete: Cascade)
+}
+
+model RequestItem {
+  id        String  @id @default(cuid())
+  requestId String
+  productId String
+  request   Request @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id])
+
+  @@unique([requestId, productId])
+}
+
+enum AssetType {
+  logo
+  reference
+}
+
+model Asset {
+  id        String    @id @default(cuid())
+  requestId String
+  type      AssetType
+  url       String
+  createdAt DateTime  @default(now())
+  request   Request   @relation(fields: [requestId], references: [id], onDelete: Cascade)
+}
+
+enum GenerationStatus {
+  queued
+  generating
+  done
+  failed
+}
+
+model Generation {
+  id             String           @id @default(cuid())
+  requestId      String           @unique
+  status         GenerationStatus @default(queued)
+  inputSnapshot  Json
+  llmOutput      Json?
+  imagePrompt    String?
+  negativePrompt String?
+  resultImageUrl String?
+  conceptResults  Json?
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime         @default(now())
+  request        Request          @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  variants       VisualizationVariant[]
+}
+
+model VisualizationVariant {
+  id              String     @id @default(cuid())
+  generationId    String
+  imageUrl        String
+  refinementBrief String?
+  imagePrompt     String?
+  sortOrder       Int        @default(0)
+  createdAt       DateTime   @default(now())
+  generation      Generation @relation(fields: [generationId], references: [id], onDelete: Cascade)
+
+  @@index([generationId, sortOrder])
+}
+
+model ProductBranding {
+  id           String  @id @default(cuid())
+  productId    String
+  product      Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  /** null = метод доступен, но зона в фиде не указана (art24) */
+  zoneName     String?
+  zoneNameRu   String?
+  methodRaw    String
+  methodCode   String
+  maxWidthMm   Int?
+  maxHeightMm  Int?
+  maxAreaMm2   Int?
+  maxColors    Int?
+  setupCost    Float?
+  /** Картинка зоны нанесения от midocean */
+  zoneImageUrl String?
+  source       String
+
+  @@index([productId])
+  @@index([productId, methodCode])
+}
+
+model PrecisionSession {
+  id             String            @id @default(cuid())
+  requestId      String            @unique
+  request        Request           @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  sourceImageUrl String
+  productId      String?
+  outputMode     String            @default("edit")
+  config         Json
+  createdAt      DateTime          @default(now())
+  renders        PrecisionRender[]
+}
+
+model PrecisionRender {
+  id            String           @id @default(cuid())
+  sessionId     String
+  session       PrecisionSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  status        String           @default("queued")
+  draftImageUrl String?
+  imageUrl      String?
+  imagePrompt   String?
+  judgeVerdict  Json?
+  error         String?
+  sortOrder     Int              @default(0)
+  createdAt     DateTime         @default(now())
+
+  @@index([sessionId, sortOrder])
+}
